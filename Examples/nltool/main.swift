@@ -120,7 +120,7 @@ func stringToHandle(_ string: String) throws -> (UInt32, UInt32) {
   guard s.count == 2 else {
     throw Errno.invalidArgument
   }
-  guard let h1 = UInt32(s[0]), let h2 = UInt32(s[1]) else {
+  guard let h1 = UInt32(s[0], radix: 16), let h2 = UInt32(s[1], radix: 16) else {
     throw Errno.invalidArgument
   }
   return (h1, h2)
@@ -132,12 +132,12 @@ func add_cbs(
   link: RTNLLinkBridge,
   arg: String
 ) async throws {
-  let (handle, parent) = try stringToHandle(arg)
+  let (parent, handle) = try stringToHandle(arg)
   // TODO: make these configurable
   // https://tsn.readthedocs.io/qdiscs.html
   try await link.add(
-    handle: handle,
-    parent: parent,
+    handle: 0,
+    parent: parent << 16 | handle,
     hiCredit: 153,
     loCredit: -1389,
     idleSlope: 98688,
