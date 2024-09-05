@@ -865,8 +865,6 @@ private extension NLSocket {
     optionsAttribute: CInt,
     operation: NLMessage.Operation
   ) async throws {
-    var options = options
-
     if handle == nil, parent == nil {
       throw NLError(rawValue: NLE_MISSING_ATTR)
     }
@@ -890,7 +888,7 @@ private extension NLSocket {
 
     if operation != .delete {
       let attr = message.nestStart(attr: CInt(TCA_OPTIONS))
-      try message.put(opaque: &options, for: optionsAttribute)
+      try message.put(opaque: options, for: optionsAttribute)
       message.nestEnd(attr: attr)
     }
 
