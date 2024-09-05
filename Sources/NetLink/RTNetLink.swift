@@ -901,6 +901,7 @@ private extension NLSocket {
     interfaceIndex: Int,
     handle: UInt32? = nil,
     parent: UInt32? = nil,
+    offload: Bool = true,
     hiCredit: Int32 = Int32.max,
     loCredit: Int32 = Int32.min,
     idleSlope: Int32 = 0,
@@ -908,6 +909,7 @@ private extension NLSocket {
     operation: NLMessage.Operation
   ) async throws {
     var qopt = tc_cbs_qopt()
+    qopt.offload = offload ? 1 : 0
     qopt.hicredit = hiCredit
     qopt.locredit = loCredit
     qopt.idleslope = idleSlope
@@ -928,6 +930,7 @@ public extension RTNLLink {
   func add(
     handle: UInt32? = nil,
     parent: UInt32? = nil,
+    offload: Bool = true,
     hiCredit: Int32 = Int32.max,
     loCredit: Int32 = Int32.min,
     idleSlope: Int32,
@@ -936,7 +939,8 @@ public extension RTNLLink {
     socket: NLSocket
   ) async throws {
     try await socket._qDiscRequest(
-      interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
+      interfaceIndex: index, handle: handle, parent: parent, offload: offload, hiCredit: hiCredit,
+      loCredit: loCredit,
       idleSlope: idleSlope, sendSlope: sendSlope,
       operation: updateIfPresent ? .addOrUpdate : .add
     )
