@@ -152,10 +152,10 @@ func del_cbs(
   link: RTNLLinkBridge,
   arg: String
 ) async throws {
-  let (handle, parent) = try stringToHandle(arg)
+  let (parent, handle) = try stringToHandle(arg)
   try await link.remove(
-    handle: handle,
-    parent: parent,
+    handle: 0,
+    parent: parent << 16 | handle,
     socket: socket
   )
 }

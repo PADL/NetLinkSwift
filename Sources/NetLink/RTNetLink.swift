@@ -862,7 +862,7 @@ private extension NLSocket {
     handle: UInt32? = nil,
     parent: UInt32? = nil,
     options: UnsafePointer<some Any>,
-    optionsAttribute: CInt,
+    optionsAttribute: CInt? = nil,
     operation: NLMessage.Operation
   ) async throws {
     if handle == nil, parent == nil {
@@ -886,7 +886,7 @@ private extension NLSocket {
       try message.put(string: kind, for: CInt(TCA_KIND))
     }
 
-    if operation != .delete {
+    if operation != .delete, let optionsAttribute {
       let attr = message.nestStart(attr: CInt(TCA_OPTIONS))
       try message.put(opaque: options, for: optionsAttribute)
       message.nestEnd(attr: attr)
@@ -895,7 +895,7 @@ private extension NLSocket {
     try await ackRequest(message: message)
   }
 
-  func _qDiscRequest(
+  func _cbsQDiscRequest(
     interfaceIndex: Int,
     handle: UInt32? = nil,
     parent: UInt32? = nil,
@@ -922,6 +922,24 @@ private extension NLSocket {
       operation: operation
     )
   }
+
+  func _pFifoFastQDiscRequest(
+    interfaceIndex: Int,
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    sendSlope: Int32 = 0,
+    operation: NLMessage.Operation
+  ) async throws {
+    var dummy: Void = ()
+    try await _tcRequest(
+      interfaceIndex: interfaceIndex,
+      kind: "pfifo_fast",
+      handle: handle,
+      parent: parent,
+      options: &dummy,
+      operation: operation
+    )
+  }
 }
 
 public extension RTNLLink {
@@ -936,7 +954,7 @@ public extension RTNLLink {
     updateIfPresent: Bool = true,
     socket: NLSocket
   ) async throws {
-    try await socket._qDiscRequest(
+    try await socket._cbsQDiscRequest(
       interfaceIndex: index, handle: handle, parent: parent, offload: offload, hiCredit: hiCredit,
       loCredit: loCredit,
       idleSlope: idleSlope, sendSlope: sendSlope,
@@ -949,11 +967,11 @@ public extension RTNLLink {
     parent: UInt32? = nil,
     socket: NLSocket
   ) async throws {
-    try await socket._qDiscRequest(
+    try await socket._pFifoFastQDiscRequest(
       interfaceIndex: index,
       handle: handle,
       parent: parent,
-      operation: .delete
+      operation: .addOrUpdate
     )
   }
 }
