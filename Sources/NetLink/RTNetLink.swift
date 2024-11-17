@@ -246,7 +246,7 @@ Sendable, CustomStringConvertible,
   }
 }
 
-public final class RTNLLinkBridge: RTNLLink {
+public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
   var bridgeHasExtendedInfo: Bool {
     rtnl_link_bridge_has_ext_info(_obj) != 0
   }
@@ -464,7 +464,7 @@ public final class RTNLLinkBridge: RTNLLink {
   }
 }
 
-public final class RTNLLinkVLAN: RTNLLink {
+public final class RTNLLinkVLAN: RTNLLink, @unchecked Sendable {
   public var vlanID: UInt16? {
     let vid = rtnl_link_vlan_get_id(_obj)
     if vid == 0 { return nil }
@@ -769,7 +769,7 @@ Sendable, CustomStringConvertible,
   }
 }
 
-public class RTNLTCQDisc: RTNLTCBase {
+public class RTNLTCQDisc: RTNLTCBase, @unchecked Sendable {
   public convenience init() {
     self.init(object: NLObject(consumingObj: rtnl_qdisc_alloc()))
   }
@@ -790,9 +790,9 @@ public class RTNLTCQDisc: RTNLTCBase {
   }
 }
 
-public final class RTNLPFIFOFastQDisc: RTNLTCQDisc {}
+public final class RTNLPFIFOFastQDisc: RTNLTCQDisc, @unchecked Sendable {}
 
-public final class RTNLMQPrioQDisc: RTNLTCQDisc {
+public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
   public var numTC: Int {
     Int(rtnl_qdisc_mqprio_get_num_tc(_obj))
   }
@@ -850,9 +850,9 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc {
   }
 }
 
-public final class RTNLTCClassifier: RTNLTCBase {}
+public final class RTNLTCClassifier: RTNLTCBase, @unchecked Sendable {}
 
-public final class RTNLTCClass: RTNLTCBase {}
+public final class RTNLTCClass: RTNLTCBase, @unchecked Sendable {}
 
 private extension NLSocket {
   func _tcRequest(

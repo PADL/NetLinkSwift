@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -58,23 +58,38 @@ let package = Package(
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                      "AsyncExtensions"],
       cSettings: PlatformCSettings,
+      swiftSettings: [
+        .swiftLanguageMode(.v5),
+        .enableExperimentalFeature("StrictConcurrency"),
+      ],
       linkerSettings: PlatformLinkerSettings
     ),
     .executableTarget(
       name: "nldump",
       dependencies: ["NetLink"],
-      path: "Examples/nldump"
+      path: "Examples/nldump",
+      swiftSettings: [
+        .swiftLanguageMode(.v5),
+        .enableExperimentalFeature("StrictConcurrency"),
+      ]
     ),
     .executableTarget(
       name: "nlmonitor",
       dependencies: ["NetLink"],
-      path: "Examples/nlmonitor"
+      path: "Examples/nlmonitor",
+      swiftSettings: [
+        .swiftLanguageMode(.v5),
+        .enableExperimentalFeature("StrictConcurrency"),
+      ]
     ),
     .executableTarget(
       name: "nltool",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-      path: "Examples/nltool"
+      path: "Examples/nltool",
+      swiftSettings: [
+        .swiftLanguageMode(.v5),
+        .enableExperimentalFeature("StrictConcurrency"),
+      ]
     ),
-  ],
-  swiftLanguageVersions: [.v5]
+  ]
 )
