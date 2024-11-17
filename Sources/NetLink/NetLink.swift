@@ -21,6 +21,7 @@ import CNetLink
 import Dispatch
 import Glibc
 import SocketAddress
+import Synchronization
 import SystemPackage
 
 public protocol NLObjectConstructible: Sendable {
@@ -248,7 +249,7 @@ Sendable {
 
   let _sk: OpaquePointer!
   private let _readSource: any DispatchSourceRead
-  private let _requests = ManagedCriticalState<[UInt32: _Request]>([:])
+  private let _requests = Mutex<[UInt32: _Request]>([:])
 
   public let notifications = Channel()
 
@@ -349,7 +350,7 @@ Sendable {
   private func _lookup(sequence: UInt32, forceRemove: Bool) -> _Request? {
     var request: _Request?
 
-    _requests.withCriticalRegion {
+    _requests.withLock {
       request = $0[sequence]
       if let request, !request.hasMultipleResults || forceRemove {
         $0.removeValue(forKey: sequence)
@@ -415,7 +416,7 @@ Sendable {
     precondition(sequence != 0)
     return try await withTaskCancellationHandler(operation: {
       try await withCheckedThrowingContinuation { continuation in
-        _requests.withCriticalRegion { $0[sequence] = .ack(continuation) }
+        _requests.withLock { $0[sequence] = .ack(continuation) }
         do {
           try message.send(on: self)
         } catch {
@@ -434,7 +435,7 @@ Sendable {
     precondition(sequence != 0)
     return try await withTaskCancellationHandler(operation: {
       try await withCheckedThrowingContinuation { continuation in
-        _requests.withCriticalRegion { $0[sequence] = .continuation(continuation) }
+        _requests.withLock { $0[sequence] = .continuation(continuation) }
         do {
           try message.send(on: self)
         } catch {
@@ -451,7 +452,7 @@ Sendable {
   ) throws -> AsyncThrowingStream<NLObjectConstructible, Error> {
     let sequence = message.sequence
     var stream: Stream!
-    _requests.withCriticalRegion { requests in
+    _requests.withLock { requests in
       let _stream = Stream { continuation in
         requests[sequence] = .stream(continuation)
         continuation.onTermination = { @Sendable _ in
