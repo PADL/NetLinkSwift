@@ -46,7 +46,7 @@ let package = Package(
     .systemLibrary(
       name: "CNetLink",
       providers: [
-        .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3"]),
+        .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3-dev"]),
       ]
     ),
     .target(
