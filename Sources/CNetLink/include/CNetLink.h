@@ -11,7 +11,7 @@
 
 #include <net/if.h>
 
-// #include <netlink/errno.h>
+#include <netlink/errno.h>
 #include <netlink/netlink.h>
 #include <netlink/socket.h>
 #include <netlink/attr.h>
