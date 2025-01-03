@@ -92,11 +92,11 @@ Sendable, CustomStringConvertible,
 
   public var addressString: String {
     byteToHex(address.0) +
-      byteToHex(address.1) +
-      byteToHex(address.2) +
-      byteToHex(address.3) +
-      byteToHex(address.4) +
-      byteToHex(address.5)
+      ":" + byteToHex(address.1) +
+      ":" + byteToHex(address.2) +
+      ":" + byteToHex(address.3) +
+      ":" + byteToHex(address.4) +
+      ":" + byteToHex(address.5)
   }
 
   public typealias LinkAddress = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
