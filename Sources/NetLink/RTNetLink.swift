@@ -70,7 +70,7 @@ Sendable, CustomStringConvertible,
   }
 
   public var description: String {
-    "\(Swift.type(of: self))(\(index):\(name):\(family):\(addressString):\(String(format: "%08x", flags)))"
+    "\(Swift.type(of: self))(\(index):\(name):\(family):\(addressString))"
   }
 
   public var flags: Int {
