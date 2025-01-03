@@ -81,17 +81,22 @@ Sendable, CustomStringConvertible,
     rtnl_link_get_group(_obj)
   }
 
+  private func byteToHex(_ byte: UInt8) -> String {
+    let hexAlphabet = Array("0123456789abcdef".utf8)
+    return String(unsafeUninitializedCapacity: 2) { ptr -> Int in
+      ptr[0] = hexAlphabet[Int(byte / 16)]
+      ptr[1] = hexAlphabet[Int(byte % 16)]
+      return 2
+    }
+  }
+
   public var addressString: String {
-    let address = address
-    return String(
-      format: "%02x:%02x:%02x:%02x:%02x:%02x",
-      address.0,
-      address.1,
-      address.2,
-      address.3,
-      address.4,
-      address.5
-    )
+    byteToHex(address.0) +
+      byteToHex(address.1) +
+      byteToHex(address.2) +
+      byteToHex(address.3) +
+      byteToHex(address.4) +
+      byteToHex(address.5)
   }
 
   public typealias LinkAddress = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
@@ -930,7 +935,7 @@ private extension NLSocket {
     sendSlope: Int32 = 0,
     operation: NLMessage.Operation
   ) async throws {
-    var dummy: Void = ()
+    var dummy = ()
     try await _tcRequest(
       interfaceIndex: interfaceIndex,
       kind: "pfifo_fast",
