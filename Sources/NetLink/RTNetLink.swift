@@ -1017,7 +1017,6 @@ private extension NLSocket {
     interfaceIndex: Int,
     handle: UInt32? = nil,
     parent: UInt32? = nil,
-    sendSlope: Int32 = 0,
     operation: NLMessage.Operation
   ) async throws {
     var dummy = ()
