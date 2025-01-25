@@ -822,13 +822,15 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
     }
   }
 
-  public var minRate: UInt64 {
+  public var minRate: [UInt64] {
     get throws {
-      var rate = UInt64(0)
-      try throwingNLError {
-        rtnl_qdisc_mqprio_get_min_rate(_obj, &rate)
+      var rates = [UInt64](repeating: 0, count: Int(TC_QOPT_MAX_QUEUE))
+      _ = try throwingNLError {
+        rates.withUnsafeMutableBufferPointer {
+          rtnl_qdisc_mqprio_get_min_rate(_obj, $0.baseAddress)
+        }
       }
-      return rate
+      return rates
     }
   }
 
