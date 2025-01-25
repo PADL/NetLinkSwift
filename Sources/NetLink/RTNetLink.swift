@@ -798,6 +798,81 @@ public class RTNLTCQDisc: RTNLTCBase, @unchecked Sendable {
 public final class RTNLPFIFOFastQDisc: RTNLTCQDisc, @unchecked Sendable {}
 
 public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
+  public enum Mode: UInt16 {
+    case dcb = 0
+    case channel = 1
+  }
+
+  public enum Shaper: UInt16 {
+    case dcb = 0
+    case bwRate = 1
+  }
+
+  public convenience init(
+    numTC: Int? = nil,
+    priorityMap: [UInt8: UInt8]? = nil,
+    hwOffload: Bool? = nil,
+    count: [UInt16]? = nil,
+    offset: [UInt16]? = nil,
+    mode: Mode? = nil,
+    shaper: Shaper? = nil,
+    minRate: [UInt64]? = nil,
+    maxRate: [UInt64]? = nil
+  ) throws {
+    self.init(object: NLObject(consumingObj: rtnl_qdisc_alloc()))
+    if let numTC {
+      try throwingNLError {
+        rtnl_qdisc_mqprio_set_num_tc(_obj, CInt(numTC))
+      }
+    }
+    if let priorityMap {
+      var priorityMap = priorityMap
+      try throwingNLError {
+        rtnl_qdisc_mqprio_set_priomap(_obj, &priorityMap, CInt(priorityMap.count))
+      }
+    }
+    if let hwOffload {
+      try throwingNLError {
+        rtnl_qdisc_mqprio_hw_offload(_obj, hwOffload ? 1 : 0)
+      }
+    }
+    if let count, let offset {
+      guard count.count == offset.count else {
+        throw NLError.invalidArgument
+      }
+
+      var count = count
+      var offset = offset
+      try throwingNLError {
+        rtnl_qdisc_mqprio_set_queue(_obj, &count, &offset, CInt(count.count))
+      }
+    } else if (count == nil) != (offset == nil) {
+      throw NLError.invalidArgument
+    }
+    if let mode {
+      try throwingNLError {
+        rtnl_qdisc_mqprio_set_mode(_obj, mode.rawValue)
+      }
+    }
+    if let shaper {
+      try throwingNLError {
+        rtnl_qdisc_mqprio_set_shaper(_obj, shaper.rawValue)
+      }
+    }
+    if let minRate {
+      var minRate = minRate
+      try throwingNLError {
+        rtnl_qdisc_mqprio_set_min_rate(_obj, &minRate, CInt(minRate.count))
+      }
+    }
+    if let maxRate {
+      var maxRate = maxRate
+      try throwingNLError {
+        rtnl_qdisc_mqprio_set_max_rate(_obj, &maxRate, CInt(maxRate.count))
+      }
+    }
+  }
+
   public var numTC: Int {
     Int(rtnl_qdisc_mqprio_get_num_tc(_obj))
   }
@@ -806,19 +881,27 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
     rtnl_qdisc_mqprio_get_hw_offload(_obj) > 0
   }
 
-  public var mode: Int32 {
+  public var mode: Mode {
     get throws {
-      try throwingNLError {
+      let mode = try throwingNLError {
         rtnl_qdisc_mqprio_get_mode(_obj)
       }
+      guard let mode = Mode(rawValue: UInt16(mode)) else {
+        throw NLError.invalidArgument
+      }
+      return mode
     }
   }
 
-  public var shaper: UInt16 {
+  public var shaper: Shaper {
     get throws {
-      try UInt16(throwingNLError {
+      let shaper = try throwingNLError {
         rtnl_qdisc_mqprio_get_shaper(_obj)
-      })
+      }
+      guard let shaper = Shaper(rawValue: UInt16(shaper)) else {
+        throw NLError.invalidArgument
+      }
+      return shaper
     }
   }
 
