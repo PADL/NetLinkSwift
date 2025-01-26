@@ -826,9 +826,14 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
       }
     }
     if let priorityMap {
-      var priorityMap = priorityMap
+      var priomap = [UInt8](repeating: 0, count: Int(TC_QOPT_BITMASK + 1))
+      for (key, value) in priorityMap {
+        guard key <= TC_QOPT_BITMASK else { throw NLError.invalidArgument }
+        priomap[Int(key)] = value
+      }
+
       try throwingNLError {
-        rtnl_qdisc_mqprio_set_priomap(_obj, &priorityMap, CInt(priorityMap.count))
+        rtnl_qdisc_mqprio_set_priomap(_obj, &priomap, CInt(priomap.count))
       }
     }
     if let hwOffload {
@@ -949,10 +954,37 @@ private extension NLSocket {
     family: sa_family_t = sa_family_t(AF_UNSPEC),
     interfaceIndex: Int,
     kind: String? = nil,
+    chain: UInt32? = nil,
     handle: UInt32? = nil,
     parent: UInt32? = nil,
     options: UnsafePointer<some Any>,
     optionsAttribute: CInt? = nil,
+    operation: NLMessage.Operation
+  ) async throws {
+    try await _tcRequest(
+      family: family,
+      interfaceIndex: interfaceIndex,
+      kind: kind,
+      chain: chain,
+      handle: handle,
+      parent: parent,
+      fillOptions: { message in
+        if let optionsAttribute {
+          try message.put(opaque: options, for: optionsAttribute)
+        }
+      },
+      operation: operation
+    )
+  }
+
+  func _tcRequest(
+    family: sa_family_t = sa_family_t(AF_UNSPEC),
+    interfaceIndex: Int,
+    kind: String? = nil,
+    chain: UInt32? = nil,
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    fillOptions: (_: borrowing NLMessage) throws -> (),
     operation: NLMessage.Operation
   ) async throws {
     if handle == nil, parent == nil {
@@ -976,13 +1008,58 @@ private extension NLSocket {
       try message.put(string: kind, for: CInt(TCA_KIND))
     }
 
-    if operation != .delete, let optionsAttribute {
+    if let chain {
+      try message.put(u32: chain, for: CInt(TCA_CHAIN))
+    }
+
+    if operation != .delete {
       let attr = message.nestStart(attr: CInt(TCA_OPTIONS))
-      try message.put(opaque: options, for: optionsAttribute)
+      try fillOptions(message)
       message.nestEnd(attr: attr)
     }
 
     try await ackRequest(message: message)
+  }
+
+  func _mqprioQDiscRequest(
+    interfaceIndex: Int,
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    mqprio: RTNLMQPrioQDisc,
+    operation: NLMessage.Operation
+  ) async throws {
+    // options attribute is tc_mqprio_qopt() without padding || mode || shaper || minRate || maxRate
+
+    var qopt = tc_mqprio_qopt()
+    qopt.num_tc = UInt8(mqprio.numTC)
+    if let priomap = rtnl_qdisc_mqprio_get_priomap(mqprio._obj) {
+      memcpy(&qopt.prio_tc_map.0, priomap, Int(TC_QOPT_BITMASK + 1))
+    }
+    qopt.hw = mqprio.hwOffload ? 1 : 0
+
+    try throwingNLError {
+      rtnl_qdisc_mqprio_get_queue(mqprio._obj, &qopt.count.0, &qopt.offset.0)
+    }
+
+    try await _tcRequest(
+      interfaceIndex: interfaceIndex,
+      kind: "mqprio",
+      handle: handle,
+      parent: parent,
+      fillOptions: { message in
+        var qopt = qopt
+        try withUnsafeBytes(of: &qopt) {
+          try message.append(Array($0), pad: NL_DONTPAD)
+          if let mode = try? mqprio.mode {
+            try message.put(u16: mode.rawValue, for: CInt(TCA_MQPRIO_MODE))
+          }
+          if let shaper = try? mqprio.shaper {
+            try message.put(u16: shaper.rawValue, for: CInt(TCA_MQPRIO_SHAPER))
+          }
+        }
+      },
+      operation: operation
+    )
   }
 
   func _cbsQDiscRequest(
