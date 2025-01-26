@@ -1112,6 +1112,31 @@ public extension RTNLLink {
   func add(
     handle: UInt32? = nil,
     parent: UInt32? = nil,
+    mqprio: RTNLMQPrioQDisc,
+    updateIfPresent: Bool = true,
+    socket: NLSocket
+  ) async throws {
+    try await socket._mqprioQDiscRequest(
+      interfaceIndex: index, handle: handle, parent: parent, mqprio: mqprio,
+      operation: updateIfPresent ? .addOrUpdate : .add
+    )
+  }
+
+  func remove(
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    mqprio: RTNLMQPrioQDisc,
+    socket: NLSocket
+  ) async throws {
+    try await socket._mqprioQDiscRequest(
+      interfaceIndex: index, handle: handle, parent: parent, mqprio: mqprio,
+      operation: .delete
+    )
+  }
+
+  func add(
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
     offload: Bool = true,
     hiCredit: Int32 = Int32.max,
     loCredit: Int32 = Int32.min,
@@ -1137,7 +1162,7 @@ public extension RTNLLink {
       interfaceIndex: index,
       handle: handle,
       parent: parent,
-      operation: .addOrUpdate
+      operation: .delete
     )
   }
 }
