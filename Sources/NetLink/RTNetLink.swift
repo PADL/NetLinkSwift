@@ -810,6 +810,9 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
   }
 
   public convenience init(
+    interfaceIndex: Int,
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
     numTC: Int? = nil,
     priorityMap: [UInt8: UInt8]? = nil,
     hwOffload: Bool? = nil,
@@ -821,6 +824,13 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
     maxRate: [UInt64]? = nil
   ) throws {
     try self.init(object: NLObject(consumingObj: rtnl_qdisc_alloc()), kind: "mqprio")
+    rtnl_tc_set_ifindex(_obj, CInt(interfaceIndex))
+    if let handle {
+      rtnl_tc_set_handle(_obj, handle)
+    }
+    if let parent {
+      rtnl_tc_set_parent(_obj, parent)
+    }
     if let numTC {
       try throwingNLError {
         rtnl_qdisc_mqprio_set_num_tc(_obj, CInt(numTC))
@@ -1023,9 +1033,6 @@ private extension NLSocket {
   }
 
   func _mqprioQDiscRequest(
-    interfaceIndex: Int,
-    handle: UInt32? = nil,
-    parent: UInt32? = nil,
     mqprio: RTNLMQPrioQDisc,
     operation: NLMessage.Operation
   ) async throws {
@@ -1043,10 +1050,10 @@ private extension NLSocket {
     }
 
     try await _tcRequest(
-      interfaceIndex: interfaceIndex,
-      kind: "mqprio",
-      handle: handle,
-      parent: parent,
+      interfaceIndex: mqprio.index,
+      kind: mqprio.kind,
+      handle: mqprio.handle,
+      parent: mqprio.parent,
       fillOptions: { message in
         var qopt = qopt
         try withUnsafeBytes(of: &qopt) {
@@ -1111,15 +1118,12 @@ private extension NLSocket {
 
 public extension RTNLLink {
   func add(
-    handle: UInt32? = nil,
-    parent: UInt32? = nil,
     mqprio: RTNLMQPrioQDisc,
     updateIfPresent: Bool = true,
     socket: NLSocket
   ) async throws {
     try await socket._mqprioQDiscRequest(
-      interfaceIndex: index, handle: handle, parent: parent, mqprio: mqprio,
-      operation: updateIfPresent ? .addOrUpdate : .add
+      mqprio: mqprio, operation: updateIfPresent ? .addOrUpdate : .add
     )
   }
 
@@ -1130,8 +1134,7 @@ public extension RTNLLink {
     socket: NLSocket
   ) async throws {
     try await socket._mqprioQDiscRequest(
-      interfaceIndex: index, handle: handle, parent: parent, mqprio: mqprio,
-      operation: .delete
+      mqprio: mqprio, operation: .delete
     )
   }
 
