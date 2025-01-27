@@ -792,6 +792,7 @@ public class RTNLTCQDisc: RTNLTCBase, @unchecked Sendable {
     default:
       self.init(object)
     }
+    rtnl_tc_set_kind(_obj, kind)
   }
 }
 
@@ -819,7 +820,7 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
     minRate: [UInt64]? = nil,
     maxRate: [UInt64]? = nil
   ) throws {
-    self.init(object: NLObject(consumingObj: rtnl_qdisc_alloc()))
+    try self.init(object: NLObject(consumingObj: rtnl_qdisc_alloc()), kind: "mqprio")
     if let numTC {
       try throwingNLError {
         rtnl_qdisc_mqprio_set_num_tc(_obj, CInt(numTC))
