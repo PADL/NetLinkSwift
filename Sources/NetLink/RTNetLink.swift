@@ -810,7 +810,6 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
   }
 
   public convenience init(
-    interfaceIndex: Int,
     handle: UInt32? = nil,
     parent: UInt32? = nil,
     numTC: Int? = nil,
@@ -824,7 +823,6 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
     maxRate: [UInt64]? = nil
   ) throws {
     try self.init(object: NLObject(consumingObj: rtnl_qdisc_alloc()), kind: "mqprio")
-    rtnl_tc_set_ifindex(_obj, CInt(interfaceIndex))
     if let handle {
       rtnl_tc_set_handle(_obj, handle)
     }
@@ -1033,6 +1031,7 @@ private extension NLSocket {
   }
 
   func _mqprioQDiscRequest(
+    interfaceIndex: Int? = nil,
     mqprio: RTNLMQPrioQDisc,
     operation: NLMessage.Operation
   ) async throws {
@@ -1050,7 +1049,7 @@ private extension NLSocket {
     }
 
     try await _tcRequest(
-      interfaceIndex: mqprio.index,
+      interfaceIndex: interfaceIndex ?? mqprio.index,
       kind: mqprio.kind,
       handle: mqprio.handle,
       parent: mqprio.parent,
@@ -1123,7 +1122,7 @@ public extension RTNLLink {
     socket: NLSocket
   ) async throws {
     try await socket._mqprioQDiscRequest(
-      mqprio: mqprio, operation: updateIfPresent ? .addOrUpdate : .add
+      interfaceIndex: index, mqprio: mqprio, operation: updateIfPresent ? .addOrUpdate : .add
     )
   }
 
@@ -1134,7 +1133,7 @@ public extension RTNLLink {
     socket: NLSocket
   ) async throws {
     try await socket._mqprioQDiscRequest(
-      mqprio: mqprio, operation: .delete
+      interfaceIndex: index, mqprio: mqprio, operation: .delete
     )
   }
 

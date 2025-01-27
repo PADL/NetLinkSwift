@@ -36,7 +36,7 @@ typealias CommandHandler = (Command, NLSocket, RTNLLinkBridge, String) async thr
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|add_fdb|del_fdb|add_mdb|del_mdb|add_cbs|del_cbs] [ifname] [vid|mac-address|parent:handle]"
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|add_fdb|del_fdb|add_mdb|del_mdb|add_mqprio|del_mqprio|add_cbs|del_cbs] [ifname] [vid|mac-address|parent:handle]"
   )
   exit(1)
 }
@@ -124,6 +124,50 @@ func stringToHandle(_ string: String) throws -> (UInt32, UInt32) {
     throw Errno.invalidArgument
   }
   return (h1, h2)
+}
+
+func add_mqprio(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLinkBridge,
+  arg: String
+) async throws {
+  let (parent, handle) = try stringToHandle(arg)
+  let mqprio = try RTNLMQPrioQDisc(
+    handle: parent << 16 | handle,
+    parent: UInt32.max,
+    numTC: 3,
+    priorityMap: [2: 1, 3: 2],
+    hwOffload: true,
+    count: [2, 1, 1],
+    offset: [2, 1, 0],
+    mode: .dcb,
+    shaper: .dcb
+  )
+
+  try await link.add(mqprio: mqprio, socket: socket)
+}
+
+func del_mqprio(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLinkBridge,
+  arg: String
+) async throws {
+  let (parent, handle) = try stringToHandle(arg)
+  let mqprio = try RTNLMQPrioQDisc(
+    handle: parent << 16 | handle,
+    parent: UInt32.max,
+    numTC: 3,
+    priorityMap: [2: 1, 3: 2],
+    hwOffload: true,
+    count: [2, 1, 1],
+    offset: [2, 1, 0],
+    mode: .dcb,
+    shaper: .dcb
+  )
+
+  try await link.remove(mqprio: mqprio, socket: socket)
 }
 
 func add_cbs(
