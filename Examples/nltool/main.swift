@@ -28,6 +28,8 @@ enum Command: CaseIterable {
   case del_fdb
   case add_mdb
   case del_mdb
+  case add_mqprio
+  case del_mqprio
   case add_cbs
   case del_cbs
 }
@@ -230,6 +232,8 @@ enum nltool {
         .del_fdb: del_fdb,
         .add_mdb: add_mdb,
         .del_mdb: del_mdb,
+        .add_mqprio: add_mqprio,
+        .del_mqprio: del_mqprio,
         .add_cbs: add_cbs,
         .del_cbs: del_cbs,
       ]
