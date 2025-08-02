@@ -22,9 +22,9 @@ import NetLink
 enum nldump {
   public static func main() async throws {
     let socket = try NLSocket(protocol: NETLINK_ROUTE)
-    for try await link in try await socket.getLinks(family: sa_family_t(AF_BRIDGE)) {
+    for try await link in try await socket.getLinks(family: sa_family_t(AF_UNSPEC)) {
       debugPrint(
-        "@\(link.index) found link \(link) MTU \(link.mtu) master \(link.master) slaveOf \(link.slaveOf)"
+        "@\(link.index) found link \(link) MTU \(link.mtu) master \(link.master) slaveOf \(link.slaveOf) TX \(link.numTXQueues)"
       )
       if let bridge = link as? RTNLLinkBridge {
         debugPrint(
@@ -43,7 +43,7 @@ enum nldump {
       }
     }
     for try await addr in try await socket.getAddresses(family: sa_family_t(AF_INET)) {
-      debugPrint("@\(addr.index) found address \(addr)")
+      debugPrint("@\(addr.index) found address \(addr) ")
     }
   }
 }
