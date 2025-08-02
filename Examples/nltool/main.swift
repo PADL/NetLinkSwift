@@ -206,6 +206,7 @@ func del_cbs(
   )
 }
 
+@MainActor
 private var gSocket: NLSocket!
 
 @main
