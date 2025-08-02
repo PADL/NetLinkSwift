@@ -129,6 +129,14 @@ Sendable, CustomStringConvertible,
     _makeAddress(rtnl_link_get_addr(_obj))
   }
 
+  public func set(address: LinkAddress, socket: NLSocket) async throws {
+    let message = try NLMessage(socket: socket, type: RTM_SETLINK, flags: [.request, .ack])
+    try message.appendIfInfo(family: sa_family_t(AF_UNSPEC), index: index)
+    let addressBytes = [address.0, address.1, address.2, address.3, address.4, address.5]
+    try message.put(data: addressBytes, for: CInt(IFLA_ADDRESS))
+    try await socket.ackRequest(message: message)
+  }
+
   public var nlAddress: NLAddress {
     NLAddress(addr: rtnl_link_get_addr(_obj))
   }

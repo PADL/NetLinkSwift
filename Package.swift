@@ -89,6 +89,15 @@ let package = Package(
       swiftSettings: [
         .swiftLanguageMode(.v5),
         .enableExperimentalFeature("StrictConcurrency"),
+      ],
+    ),
+    .executableTarget(
+      name: "setmacaddr",
+      dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
+      path: "Examples/setmacaddr",
+      swiftSettings: [
+        .swiftLanguageMode(.v5),
+        .enableExperimentalFeature("StrictConcurrency"),
       ]
     ),
   ]
