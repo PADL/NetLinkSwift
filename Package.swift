@@ -99,6 +99,6 @@ let package = Package(
         .swiftLanguageMode(.v5),
         .enableExperimentalFeature("StrictConcurrency"),
       ]
-    ),
+    )
   ]
 )
