@@ -1056,28 +1056,35 @@ private extension NLSocket {
       rtnl_qdisc_mqprio_get_queue(mqprio._obj, &qopt.count.0, &qopt.offset.0)
     }
 
-    try await _tcRequest(
-      interfaceIndex: interfaceIndex ?? mqprio.index,
-      kind: mqprio.kind,
-      handle: mqprio.handle,
-      parent: mqprio.parent,
-      fillOptions: { message in
-        var qopt = qopt
-        try withUnsafeBytes(of: &qopt) {
-          try message.append(Array($0), pad: NL_DONTPAD)
-          if mqprio.hwOffload {
-            if let mode = try? mqprio.mode {
-              try message.put(u16: mode.rawValue, for: CInt(TCA_MQPRIO_MODE))
+    do {
+      try await _tcRequest(
+        interfaceIndex: interfaceIndex ?? mqprio.index,
+        kind: mqprio.kind,
+        handle: mqprio.handle,
+        parent: mqprio.parent,
+        fillOptions: { message in
+          var qopt = qopt
+          try withUnsafeBytes(of: &qopt) {
+            try message.append(Array($0), pad: NL_DONTPAD)
+            if mqprio.hwOffload {
+              if let mode = try? mqprio.mode {
+                try message.put(u16: mode.rawValue, for: CInt(TCA_MQPRIO_MODE))
+              }
+              if let shaper = try? mqprio.shaper {
+                try message.put(u16: shaper.rawValue, for: CInt(TCA_MQPRIO_SHAPER))
+              }
+              // TODO: support minRate, maxRate for each TC
             }
-            if let shaper = try? mqprio.shaper {
-              try message.put(u16: shaper.rawValue, for: CInt(TCA_MQPRIO_SHAPER))
-            }
-            // TODO: support minRate, maxRate for each TC
           }
-        }
-      },
-      operation: operation
-    )
+        },
+        operation: operation
+      )
+    } catch {
+      debugPrint(
+        "_mqprioQDiscRequest: failed to make MQPRIO TC request on interface index \(interfaceIndex ?? mqprio.index) with mqprio \(mqprio) qopt \(qopt): \(error)"
+      )
+      throw error
+    }
   }
 
   func _cbsQDiscRequest(
