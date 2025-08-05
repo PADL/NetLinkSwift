@@ -1065,11 +1065,14 @@ private extension NLSocket {
         var qopt = qopt
         try withUnsafeBytes(of: &qopt) {
           try message.append(Array($0), pad: NL_DONTPAD)
-          if let mode = try? mqprio.mode {
-            try message.put(u16: mode.rawValue, for: CInt(TCA_MQPRIO_MODE))
-          }
-          if let shaper = try? mqprio.shaper {
-            try message.put(u16: shaper.rawValue, for: CInt(TCA_MQPRIO_SHAPER))
+          if mqprio.hwOffload {
+            if let mode = try? mqprio.mode {
+              try message.put(u16: mode.rawValue, for: CInt(TCA_MQPRIO_MODE))
+            }
+            if let shaper = try? mqprio.shaper {
+              try message.put(u16: shaper.rawValue, for: CInt(TCA_MQPRIO_SHAPER))
+            }
+            // TODO: support minRate, maxRate for each TC
           }
         }
       },
