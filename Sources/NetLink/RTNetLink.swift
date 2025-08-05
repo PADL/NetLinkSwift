@@ -1038,7 +1038,7 @@ private extension NLSocket {
     try await ackRequest(message: message)
   }
 
-  func _mqprioQDiscRequest(
+  func _mqprioQDiscRequest_addOrUpdate(
     interfaceIndex: Int? = nil,
     mqprio: RTNLMQPrioQDisc,
     operation: NLMessage.Operation
@@ -1084,6 +1084,41 @@ private extension NLSocket {
         "_mqprioQDiscRequest: failed to make MQPRIO TC request on interface index \(interfaceIndex ?? mqprio.index) with mqprio \(mqprio) qopt \(qopt): \(error)"
       )
       throw error
+    }
+  }
+
+  func _mqprioQDiscRequest_delete(
+    interfaceIndex: Int? = nil,
+    mqprio: RTNLMQPrioQDisc
+  ) async throws {
+    try await _tcRequest(
+      interfaceIndex: interfaceIndex ?? mqprio.index,
+      kind: mqprio.kind,
+      handle: mqprio.handle,
+      parent: mqprio.parent,
+      fillOptions: { _ in },
+      operation: .delete
+    )
+  }
+
+  func _mqprioQDiscRequest(
+    interfaceIndex: Int? = nil,
+    mqprio: RTNLMQPrioQDisc,
+    operation: NLMessage.Operation
+  ) async throws {
+    switch operation {
+    case .add:
+      fallthrough
+    case .update:
+      fallthrough
+    case .addOrUpdate:
+      try await _mqprioQDiscRequest_addOrUpdate(
+        interfaceIndex: interfaceIndex,
+        mqprio: mqprio,
+        operation: operation
+      )
+    case .delete:
+      try await _mqprioQDiscRequest_delete(interfaceIndex: interfaceIndex, mqprio: mqprio)
     }
   }
 
