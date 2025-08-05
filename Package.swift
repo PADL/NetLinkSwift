@@ -89,7 +89,7 @@ let package = Package(
       swiftSettings: [
         .swiftLanguageMode(.v5),
         .enableExperimentalFeature("StrictConcurrency"),
-      ],
+      ]
     ),
     .executableTarget(
       name: "setmacaddr",
