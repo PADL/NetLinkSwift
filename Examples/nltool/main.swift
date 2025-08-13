@@ -80,13 +80,13 @@ func findBridge(index: Int, socket: NLSocket) async throws -> RTNLLinkBridge {
 }
 
 func add_vlan(command: Command, socket: NLSocket, link: RTNLLink, arg: String) async throws {
-  guard let vlan = UInt16(arg) else { usage() }
-  try await (link as! RTNLLinkBridge).add(vlans: Set([vlan]), socket: socket)
+  guard let link = link as? RTNLLinkBridge, let vlan = UInt16(arg) else { usage() }
+  try await link.add(vlans: Set([vlan]), socket: socket)
 }
 
 func del_vlan(command: Command, socket: NLSocket, link: RTNLLink, arg: String) async throws {
-  guard let vlan = UInt16(arg) else { usage() }
-  try await (link as! RTNLLinkBridge).remove(vlans: Set([vlan]), socket: socket)
+  guard let link = link as? RTNLLinkBridge, let vlan = UInt16(arg) else { usage() }
+  try await link.remove(vlans: Set([vlan]), socket: socket)
 }
 
 func add_fdb(
