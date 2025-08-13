@@ -608,8 +608,9 @@ public extension NLSocket {
     try drop(membership: RTNLGRP_TC)
   }
 
-  fileprivate func _vlanRequest(
-    vlans: Set<UInt16>,
+  // NLM_F_BULK is not supported for RTM_DELLINK
+  private func _vlanRequestSingle(
+    vlan vid: UInt16,
     interfaceIndex: Int,
     flags: UInt16 = 0,
     moreFlags: UInt16 = 0,
@@ -625,12 +626,28 @@ public extension NLSocket {
     if moreFlags != 0 {
       try message.put(u16: moreFlags, for: CInt(IFLA_BRIDGE_FLAGS))
     }
-    for vid in vlans {
-      var vlanInfo = bridge_vlan_info(flags: flags, vid: vid)
-      try message.put(opaque: &vlanInfo, for: CInt(IFLA_BRIDGE_VLAN_INFO))
-    }
+    var vlanInfo = bridge_vlan_info(flags: flags, vid: vid)
+    try message.put(opaque: &vlanInfo, for: CInt(IFLA_BRIDGE_VLAN_INFO))
     message.nestEnd(attr: attr)
     try await ackRequest(message: message)
+  }
+
+  fileprivate func _vlanRequest(
+    vlans: Set<UInt16>,
+    interfaceIndex: Int,
+    flags: UInt16 = 0,
+    moreFlags: UInt16 = 0,
+    operation: NLMessage.Operation
+  ) async throws {
+    for vlan in vlans {
+      try await _vlanRequestSingle(
+        vlan: vlan,
+        interfaceIndex: interfaceIndex,
+        flags: flags,
+        moreFlags: moreFlags,
+        operation: operation
+      )
+    }
   }
 
   fileprivate func _groupRequest(
