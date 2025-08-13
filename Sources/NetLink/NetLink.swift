@@ -677,7 +677,7 @@ struct NLMessage: ~Copyable {
     static let _add = Flags([.exclusive, .create])
     static let _addOrUpdate = Flags([.create, .replace])
     static let _update = Flags([.replace])
-    static let _delete = Flags([.exclusive])
+    static let _delete = Flags()
   }
 
   enum Operation {
