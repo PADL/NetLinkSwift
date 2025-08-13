@@ -34,7 +34,7 @@ enum Command: CaseIterable {
   case del_cbs
 }
 
-typealias CommandHandler = (Command, NLSocket, RTNLLinkBridge, String) async throws -> ()
+typealias CommandHandler = (Command, NLSocket, RTNLLink, String) async throws -> ()
 
 func usage() -> Never {
   print(
@@ -43,40 +43,56 @@ func usage() -> Never {
   exit(1)
 }
 
-func findBridge(named name: String, socket: NLSocket) async throws -> RTNLLinkBridge {
-  guard let link = try await socket.getLinks(family: sa_family_t(AF_BRIDGE))
-    .first(where: { $0 is RTNLLinkBridge && $0.name == name })
+func findLink(named name: String, socket: NLSocket) async throws -> RTNLLink {
+  guard let link = try await socket.getLinks(family: sa_family_t(AF_UNSPEC))
+    .first(where: { $0.name == name })
   else {
     print("interface \(name) not found")
     throw Errno.noSuchFileOrDirectory
   }
-  return link as! RTNLLinkBridge
+  return link
 }
 
-func findBridge(index: Int, socket: NLSocket) async throws -> RTNLLinkBridge {
-  guard let link = try await socket.getLinks(family: sa_family_t(AF_BRIDGE))
-    .first(where: { $0 is RTNLLinkBridge && $0.index == index })
+func findBridge(named name: String, socket: NLSocket) async throws -> RTNLLinkBridge {
+  guard let bridge = try await findLink(named: name, socket: socket) as? RTNLLinkBridge else {
+    print("interface \(name) is not a bridge")
+    throw Errno.invalidArgument
+  }
+  return bridge
+}
+
+func findLink(index: Int, socket: NLSocket) async throws -> RTNLLink {
+  guard let link = try await socket.getLinks(family: sa_family_t(AF_UNSPEC))
+    .first(where: { $0.index == index })
   else {
     print("interface \(index) not found")
     throw Errno.noSuchFileOrDirectory
   }
-  return link as! RTNLLinkBridge
+  return link
 }
 
-func add_vlan(command: Command, socket: NLSocket, link: RTNLLinkBridge, arg: String) async throws {
-  guard let vlan = UInt16(arg) else { usage() }
-  try await link.add(vlans: Set([vlan]), socket: socket)
+func findBridge(index: Int, socket: NLSocket) async throws -> RTNLLinkBridge {
+  guard let bridge = try await findLink(index: index, socket: socket) as? RTNLLinkBridge else {
+    print("interface \(index) is not a bridge")
+    throw Errno.invalidArgument
+  }
+  return bridge
 }
 
-func del_vlan(command: Command, socket: NLSocket, link: RTNLLinkBridge, arg: String) async throws {
+func add_vlan(command: Command, socket: NLSocket, link: RTNLLink, arg: String) async throws {
   guard let vlan = UInt16(arg) else { usage() }
-  try await link.remove(vlans: Set([vlan]), socket: socket)
+  try await (link as! RTNLLinkBridge).add(vlans: Set([vlan]), socket: socket)
+}
+
+func del_vlan(command: Command, socket: NLSocket, link: RTNLLink, arg: String) async throws {
+  guard let vlan = UInt16(arg) else { usage() }
+  try await (link as! RTNLLinkBridge).remove(vlans: Set([vlan]), socket: socket)
 }
 
 func add_fdb(
   command: Command,
   socket: NLSocket,
-  link: RTNLLinkBridge,
+  link: RTNLLink,
   arg: String
 ) async throws {
   let bridge = try await findBridge(index: link.master, socket: socket)
@@ -87,7 +103,7 @@ func add_fdb(
 func del_fdb(
   command: Command,
   socket: NLSocket,
-  link: RTNLLinkBridge,
+  link: RTNLLink,
   arg: String
 ) async throws {
   let bridge = try await findBridge(index: link.master, socket: socket)
@@ -98,7 +114,7 @@ func del_fdb(
 func add_mdb(
   command: Command,
   socket: NLSocket,
-  link: RTNLLinkBridge,
+  link: RTNLLink,
   arg: String
 ) async throws {
   let bridge = try await findBridge(index: link.master, socket: socket)
@@ -109,7 +125,7 @@ func add_mdb(
 func del_mdb(
   command: Command,
   socket: NLSocket,
-  link: RTNLLinkBridge,
+  link: RTNLLink,
   arg: String
 ) async throws {
   let bridge = try await findBridge(index: link.master, socket: socket)
@@ -131,7 +147,7 @@ func stringToHandle(_ string: String) throws -> (UInt32, UInt32) {
 func add_mqprio(
   command: Command,
   socket: NLSocket,
-  link: RTNLLinkBridge,
+  link: RTNLLink,
   arg: String
 ) async throws {
   let (parent, handle) = try stringToHandle(arg)
@@ -153,7 +169,7 @@ func add_mqprio(
 func del_mqprio(
   command: Command,
   socket: NLSocket,
-  link: RTNLLinkBridge,
+  link: RTNLLink,
   arg: String
 ) async throws {
   let (parent, handle) = try stringToHandle(arg)
@@ -175,7 +191,7 @@ func del_mqprio(
 func add_cbs(
   command: Command,
   socket: NLSocket,
-  link: RTNLLinkBridge,
+  link: RTNLLink,
   arg: String
 ) async throws {
   let (parent, handle) = try stringToHandle(arg)
@@ -195,7 +211,7 @@ func add_cbs(
 func del_cbs(
   command: Command,
   socket: NLSocket,
-  link: RTNLLinkBridge,
+  link: RTNLLink,
   arg: String
 ) async throws {
   let (parent, handle) = try stringToHandle(arg)
@@ -225,7 +241,7 @@ enum nltool {
     do {
       let socket = try NLSocket(protocol: NETLINK_ROUTE)
       gSocket = socket
-      let link = try await findBridge(named: CommandLine.arguments[2], socket: socket)
+      let link = try await findLink(named: CommandLine.arguments[2], socket: socket)
       let commands: [Command: CommandHandler] = [
         .add_vlan: add_vlan,
         .del_vlan: del_vlan,
