@@ -344,7 +344,13 @@ Sendable {
   }
 
   public func useNextSequenceNumber() -> UInt32 {
-    nl_socket_use_seq(_sk)
+    var nextSequenceNumber: UInt32
+
+    repeat {
+      nextSequenceNumber = nl_socket_use_seq(_sk)
+    } while nextSequenceNumber == 0
+
+    return nextSequenceNumber
   }
 
   private func _lookup(sequence: UInt32, forceRemove: Bool) -> _Request? {
