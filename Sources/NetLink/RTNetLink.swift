@@ -1224,7 +1224,7 @@ public extension RTNLLink {
     parent: UInt32? = nil,
     socket: NLSocket
   ) async throws {
-    try await socket._pFifoFastQDiscRequest(
+    try await socket._cbsQDiscRequest(
       interfaceIndex: index,
       handle: handle,
       parent: parent,
