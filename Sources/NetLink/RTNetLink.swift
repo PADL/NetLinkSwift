@@ -1239,14 +1239,25 @@ public extension RTNLLink {
   func remove(
     handle: UInt32? = nil,
     parent: UInt32? = nil,
-    socket: NLSocket
+    socket: NLSocket,
+    restoreDefaultQDisc: Bool = true
   ) async throws {
-    try await socket._cbsQDiscRequest(
-      interfaceIndex: index,
-      handle: handle,
-      parent: parent,
-      operation: .delete
-    )
+    if restoreDefaultQDisc {
+      try await socket._pFifoFastQDiscRequest(
+        interfaceIndex: index,
+        handle: handle,
+        parent: parent,
+        operation: .addOrUpdate
+      )
+    } else {
+      // this will remove the CBS QDisc entirely, which may stop traffic flowing
+      try await socket._cbsQDiscRequest(
+        interfaceIndex: index,
+        handle: handle,
+        parent: parent,
+        operation: .delete
+      )
+    }
   }
 }
 
