@@ -1089,7 +1089,24 @@ private extension NLSocket {
             if let shaper = try? mqprio.shaper {
               try message.put(u16: shaper.rawValue, for: CInt(TCA_MQPRIO_SHAPER))
             }
-            // TODO: support minRate, maxRate for each TC
+            if let minRate = try? mqprio.minRate {
+              var minRate = minRate
+              try minRate.withUnsafeMutableBufferPointer { buffer in
+                try message.put(
+                  data: Array(UnsafeRawBufferPointer(buffer).bindMemory(to: UInt8.self)),
+                  for: CInt(TCA_MQPRIO_MIN_RATE64)
+                )
+              }
+            }
+            if let maxRate = try? mqprio.maxRate {
+              var maxRate = maxRate
+              try maxRate.withUnsafeMutableBufferPointer { buffer in
+                try message.put(
+                  data: Array(UnsafeRawBufferPointer(buffer).bindMemory(to: UInt8.self)),
+                  for: CInt(TCA_MQPRIO_MAX_RATE64)
+                )
+              }
+            }
           }
         }
       },
