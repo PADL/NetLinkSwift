@@ -1193,6 +1193,25 @@ private extension NLSocket {
       operation: operation
     )
   }
+
+  func _fqCoDelQDiscRequest(
+    interfaceIndex: Int,
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    operation: NLMessage.Operation
+  ) async throws {
+    var dummy = ()
+    try await _tcRequest(
+      interfaceIndex: interfaceIndex,
+      kind: "fq_codel",
+      handle: handle,
+      parent: parent,
+      options: &dummy,
+      operation: operation
+    )
+  }
+
+
 }
 
 public extension RTNLLink {
@@ -1243,7 +1262,7 @@ public extension RTNLLink {
     restoreDefaultQDisc: Bool = true
   ) async throws {
     if restoreDefaultQDisc {
-      try await socket._pFifoFastQDiscRequest(
+      try await socket._fqCoDelQDiscRequest(
         interfaceIndex: index,
         handle: handle,
         parent: parent,
