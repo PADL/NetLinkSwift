@@ -1210,8 +1210,6 @@ private extension NLSocket {
       operation: operation
     )
   }
-
-
 }
 
 public extension RTNLLink {

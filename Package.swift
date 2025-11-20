@@ -58,47 +58,27 @@ let package = Package(
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                      "AsyncExtensions"],
       cSettings: PlatformCSettings,
-      swiftSettings: [
-        .swiftLanguageMode(.v5),
-        .enableExperimentalFeature("StrictConcurrency"),
-      ],
       linkerSettings: PlatformLinkerSettings
     ),
     .executableTarget(
       name: "nldump",
       dependencies: ["NetLink"],
-      path: "Examples/nldump",
-      swiftSettings: [
-        .swiftLanguageMode(.v5),
-        .enableExperimentalFeature("StrictConcurrency"),
-      ]
+      path: "Examples/nldump"
     ),
     .executableTarget(
       name: "nlmonitor",
       dependencies: ["NetLink"],
-      path: "Examples/nlmonitor",
-      swiftSettings: [
-        .swiftLanguageMode(.v5),
-        .enableExperimentalFeature("StrictConcurrency"),
-      ]
+      path: "Examples/nlmonitor"
     ),
     .executableTarget(
       name: "nltool",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-      path: "Examples/nltool",
-      swiftSettings: [
-        .swiftLanguageMode(.v5),
-        .enableExperimentalFeature("StrictConcurrency"),
-      ]
+      path: "Examples/nltool"
     ),
     .executableTarget(
       name: "setmacaddr",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-      path: "Examples/setmacaddr",
-      swiftSettings: [
-        .swiftLanguageMode(.v5),
-        .enableExperimentalFeature("StrictConcurrency"),
-      ]
-    )
+      path: "Examples/setmacaddr"
+    ),
   ]
 )
