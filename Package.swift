@@ -3,17 +3,6 @@
 
 import PackageDescription
 
-var PlatformCSettings: [CSetting] = []
-var PlatformLinkerSettings: [LinkerSetting] = []
-
-PlatformCSettings = [.unsafeFlags(["-I", "/usr/include/libnl3"])]
-
-PlatformLinkerSettings += [
-  .linkedLibrary("nl-3"),
-  .linkedLibrary("nl-route-3"),
-  .linkedLibrary("nl-nf-3"),
-]
-
 let package = Package(
   name: "NetLinkSwift",
   products: [
@@ -45,6 +34,7 @@ let package = Package(
   targets: [
     .systemLibrary(
       name: "CNetLink",
+      pkgConfig: "libnl-3.0",
       providers: [
         .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3-dev"]),
       ]
@@ -56,9 +46,7 @@ let package = Package(
                      .product(name: "SocketAddress", package: "SocketAddress"),
                      .product(name: "SystemPackage", package: "swift-system"),
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
-                     "AsyncExtensions"],
-      cSettings: PlatformCSettings,
-      linkerSettings: PlatformLinkerSettings
+                     "AsyncExtensions"]
     ),
     .executableTarget(
       name: "nldump",
