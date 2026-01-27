@@ -18,6 +18,7 @@ import AsyncAlgorithms
 import AsyncExtensions
 import CLinuxSockAddr
 import CNetLink
+import Foundation
 import SocketAddress
 import SystemPackage
 
@@ -91,38 +92,43 @@ Sendable, CustomStringConvertible,
   }
 
   public var addressString: String {
-    byteToHex(address.0) +
-      ":" + byteToHex(address.1) +
-      ":" + byteToHex(address.2) +
-      ":" + byteToHex(address.3) +
-      ":" + byteToHex(address.4) +
-      ":" + byteToHex(address.5)
+    byteToHex(address[0]) +
+      ":" + byteToHex(address[1]) +
+      ":" + byteToHex(address[2]) +
+      ":" + byteToHex(address[3]) +
+      ":" + byteToHex(address[4]) +
+      ":" + byteToHex(address[5])
   }
 
-  public typealias LinkAddress = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+  public typealias LinkAddress = InlineArray<6, UInt8>
+
+  fileprivate static func linkAddressToTuple(_ addr: LinkAddress) -> (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
+    (addr[0], addr[1], addr[2], addr[3], addr[4], addr[5])
+  }
 
   public static func parseMacAddressString(_ macAddress: String) throws -> LinkAddress {
     let ll = try sockaddr_ll(
       family: sa_family_t(AF_PACKET),
       presentationAddress: macAddress
     )
-    return (
-      ll.sll_addr.0,
-      ll.sll_addr.1,
-      ll.sll_addr.2,
-      ll.sll_addr.3,
-      ll.sll_addr.4,
-      ll.sll_addr.5
-    )
+    var result = LinkAddress(repeating: 0)
+    withUnsafeBytes(of: ll.sll_addr) { bytes in
+      for i in 0..<6 {
+        result[i] = bytes[i]
+      }
+    }
+    return result
   }
 
   private func _makeAddress(_ addr: OpaquePointer) -> LinkAddress {
-    var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(addr)))
-    precondition(mac.count == Int(ETH_ALEN))
-    _ = mac.withUnsafeMutableBytes {
-      memcpy($0.baseAddress!, nl_addr_get_binary_addr(addr), Int(nl_addr_get_len(addr)))
+    let len = Int(nl_addr_get_len(addr))
+    precondition(len == Int(ETH_ALEN))
+    var result = LinkAddress(repeating: 0)
+    let bytes = UnsafeBufferPointer(start: nl_addr_get_binary_addr(addr).assumingMemoryBound(to: UInt8.self), count: len)
+    for i in 0..<6 {
+      result[i] = bytes[i]
     }
-    return (mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
+    return result
   }
 
   public var address: LinkAddress {
@@ -132,8 +138,7 @@ Sendable, CustomStringConvertible,
   public func set(address: LinkAddress, socket: NLSocket) async throws {
     let message = try NLMessage(socket: socket, type: RTM_SETLINK, flags: [.request, .ack])
     try message.appendIfInfo(family: sa_family_t(AF_UNSPEC), index: index)
-    let addressBytes = [address.0, address.1, address.2, address.3, address.4, address.5]
-    try message.put(data: addressBytes, for: CInt(IFLA_ADDRESS))
+    try message.put(data: address.span.withUnsafeBytes { Array($0) }, for: CInt(IFLA_ADDRESS))
     try await socket.ackRequest(message: message)
   }
 
@@ -675,7 +680,7 @@ public extension NLSocket {
       addr: .init()
     )
     for groupAddress in groupAddresses {
-      entry.addr.u.mac_addr = groupAddress
+      entry.addr.u.mac_addr = RTNLLink.linkAddressToTuple(groupAddress)
       try message.put(opaque: &entry, for: CInt(MDBA_MDB_ENTRY))
     }
     try await ackRequest(message: message)
@@ -704,9 +709,8 @@ public extension NLSocket {
     try withUnsafeBytes(of: &msg) {
       try message.append(Array($0))
     }
-    try withUnsafePointer(to: macAddress) { pointer in
-      let start = pointer.propertyBasePointer(to: \.0)!
-      let macAddressBytes = [UInt8](UnsafeBufferPointer(start: start, count: Int(ETH_ALEN)))
+    try withUnsafeBytes(of: macAddress) { bytes in
+      let macAddressBytes = [UInt8](bytes)
       try message.put(data: macAddressBytes, for: CInt(NDA_LLADDR))
     }
     if let bridgeIndex {

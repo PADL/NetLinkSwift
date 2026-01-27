@@ -59,27 +59,35 @@ let package = Package(
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                      "AsyncExtensions"],
       cSettings: PlatformCSettings,
+      swiftSettings: [
+        .enableExperimentalFeature("StrictConcurrency"),
+        .enableExperimentalFeature("NonisolatedNonsendingByDefault"),
+      ],
       linkerSettings: PlatformLinkerSettings
     ),
     .executableTarget(
       name: "nldump",
       dependencies: ["NetLink"],
-      path: "Examples/nldump"
+      path: "Examples/nldump",
+      cSettings: PlatformCSettings
     ),
     .executableTarget(
       name: "nlmonitor",
       dependencies: ["NetLink"],
-      path: "Examples/nlmonitor"
+      path: "Examples/nlmonitor",
+      cSettings: PlatformCSettings
     ),
     .executableTarget(
       name: "nltool",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-      path: "Examples/nltool"
+      path: "Examples/nltool",
+      cSettings: PlatformCSettings
     ),
     .executableTarget(
       name: "setmacaddr",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-      path: "Examples/setmacaddr"
+      path: "Examples/setmacaddr",
+      cSettings: PlatformCSettings
     ),
   ]
 )

@@ -102,9 +102,13 @@ public struct NFNLLogMessage: NLObjectConstructible, Sendable {
     return Array(UnsafeBufferPointer(start: hwAddress, count: Int(length)))
   }
 
-  public var macAddress: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)? {
+  public var macAddress: InlineArray<6, UInt8>? {
     guard let hwAddress, hwAddress.count == 6 else { return nil }
-    return (hwAddress[0], hwAddress[1], hwAddress[2], hwAddress[3], hwAddress[4], hwAddress[5])
+    var result = InlineArray<6, UInt8>(repeating: 0)
+    for i in 0..<6 {
+      result[i] = hwAddress[i]
+    }
+    return result
   }
 
   public var hwHeader: [UInt8]? {
