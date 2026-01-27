@@ -102,10 +102,6 @@ Sendable, CustomStringConvertible,
 
   public typealias LinkAddress = InlineArray<6, UInt8>
 
-  fileprivate static func linkAddressToTuple(_ addr: LinkAddress) -> (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
-    (addr[0], addr[1], addr[2], addr[3], addr[4], addr[5])
-  }
-
   public static func parseMacAddressString(_ macAddress: String) throws -> LinkAddress {
     let ll = try sockaddr_ll(
       family: sa_family_t(AF_PACKET),
@@ -124,7 +120,10 @@ Sendable, CustomStringConvertible,
     let len = Int(nl_addr_get_len(addr))
     precondition(len == Int(ETH_ALEN))
     var result = LinkAddress(repeating: 0)
-    let bytes = UnsafeBufferPointer(start: nl_addr_get_binary_addr(addr).assumingMemoryBound(to: UInt8.self), count: len)
+    let bytes = UnsafeBufferPointer(
+      start: nl_addr_get_binary_addr(addr).assumingMemoryBound(to: UInt8.self),
+      count: len
+    )
     for i in 0..<6 {
       result[i] = bytes[i]
     }
@@ -679,8 +678,13 @@ public extension NLSocket {
       vid: vlanID ?? 0,
       addr: .init()
     )
+
+    func linkAddressToTuple(_ addr: RTNLLink.LinkAddress) -> (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
+      (addr[0], addr[1], addr[2], addr[3], addr[4], addr[5])
+    }
+
     for groupAddress in groupAddresses {
-      entry.addr.u.mac_addr = RTNLLink.linkAddressToTuple(groupAddress)
+      entry.addr.u.mac_addr = linkAddressToTuple(groupAddress)
       try message.put(opaque: &entry, for: CInt(MDBA_MDB_ENTRY))
     }
     try await ackRequest(message: message)
