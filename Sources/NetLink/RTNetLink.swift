@@ -92,7 +92,8 @@ Sendable, CustomStringConvertible,
   }
 
   public var addressString: String {
-    byteToHex(address[0]) +
+    guard address.count == 6 else { return "" }
+    return byteToHex(address[0]) +
       ":" + byteToHex(address[1]) +
       ":" + byteToHex(address[2]) +
       ":" + byteToHex(address[3]) +
