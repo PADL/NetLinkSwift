@@ -680,7 +680,9 @@ public extension NLSocket {
       addr: .init()
     )
 
-    func linkAddressToTuple(_ addr: RTNLLink.LinkAddress) -> (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
+    func linkAddressToTuple(_ addr: RTNLLink
+      .LinkAddress) -> (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+    {
       (addr[0], addr[1], addr[2], addr[3], addr[4], addr[5])
     }
 
