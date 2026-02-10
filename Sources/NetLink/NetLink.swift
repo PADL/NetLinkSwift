@@ -526,7 +526,7 @@ struct NLAttribute {
 }
 
 public struct NLAddress: Sendable, NLObjectConstructible, CustomStringConvertible {
-  private var _addr: NLObject
+  private var _addr: NLObject // this is a rtnl_addr, not an nl_addr
 
   init() {
     let addr = rtnl_addr_alloc()
@@ -565,21 +565,50 @@ public struct NLAddress: Sendable, NLObjectConstructible, CustomStringConvertibl
     Int(rtnl_addr_get_scope(addr))
   }
 
-  public var socketAddress: SocketAddress {
-    get throws {
-      let local = rtnl_addr_get_local(addr)
-      var ss = Glibc.sockaddr_storage()
-      var salen = ss.size
+  private func _getSocketAddress(for addr: OpaquePointer?) throws -> SocketAddress {
+    guard let addr else { throw Errno.noSuchFileOrDirectory }
 
-      _ = try withUnsafeMutablePointer(to: &ss) {
-        try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-          try throwingNLError {
-            nl_addr_fill_sockaddr(local, sa, &salen)
-          }
+    var ss = Glibc.sockaddr_storage()
+    var salen = socklen_t(MemoryLayout<sockaddr_storage>.size)
+
+    _ = try withUnsafeMutablePointer(to: &ss) {
+      try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+        try throwingNLError {
+          nl_addr_fill_sockaddr(addr, sa, &salen)
         }
       }
+    }
 
-      return ss
+    return ss
+  }
+
+  public var localAddress: SocketAddress {
+    get throws {
+      try _getSocketAddress(for: rtnl_addr_get_local(addr))
+    }
+  }
+
+  public var peerAddress: SocketAddress {
+    get throws {
+      try _getSocketAddress(for: rtnl_addr_get_peer(addr))
+    }
+  }
+
+  public var broadcastAddress: SocketAddress {
+    get throws {
+      try _getSocketAddress(for: rtnl_addr_get_broadcast(addr))
+    }
+  }
+
+  public var multicastAddress: SocketAddress {
+    get throws {
+      try _getSocketAddress(for: rtnl_addr_get_multicast(addr))
+    }
+  }
+
+  public var anycastAddress: SocketAddress {
+    get throws {
+      try _getSocketAddress(for: rtnl_addr_get_anycast(addr))
     }
   }
 
@@ -597,31 +626,6 @@ public struct NLAddress: Sendable, NLObjectConstructible, CustomStringConvertibl
       $0.count
     ) }
     return "NLAddress(family: \(String(cString: _af!)), local: \(String(cString: _local!)), index: \(index))"
-  }
-
-  public var localAddress: NLAddress? {
-    guard let addr = rtnl_addr_get_local(addr) else { return nil }
-    return NLAddress(addr: addr)
-  }
-
-  public var peerAddress: NLAddress? {
-    guard let addr = rtnl_addr_get_peer(addr) else { return nil }
-    return NLAddress(addr: addr)
-  }
-
-  public var broadcastAddress: NLAddress? {
-    guard let addr = rtnl_addr_get_broadcast(addr) else { return nil }
-    return NLAddress(addr: addr)
-  }
-
-  public var multicastAddress: NLAddress? {
-    guard let addr = rtnl_addr_get_multicast(addr) else { return nil }
-    return NLAddress(addr: addr)
-  }
-
-  public var anycastAddress: NLAddress? {
-    guard let addr = rtnl_addr_get_anycast(addr) else { return nil }
-    return NLAddress(addr: addr)
   }
 }
 
