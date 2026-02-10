@@ -565,22 +565,21 @@ public struct NLAddress: Sendable, NLObjectConstructible, CustomStringConvertibl
     Int(rtnl_addr_get_scope(addr))
   }
 
-  public var socketAddress: SocketAddress? {
-    do {
+  public var socketAddress: SocketAddress {
+    get throws {
+      let local = rtnl_addr_get_local(addr)
       var ss = Glibc.sockaddr_storage()
-      var salen = socklen_t(0)
+      var salen = ss.size
 
       _ = try withUnsafeMutablePointer(to: &ss) {
         try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
           try throwingNLError {
-            nl_addr_fill_sockaddr(addr, sa, &salen)
+            nl_addr_fill_sockaddr(local, sa, &salen)
           }
         }
       }
 
       return ss
-    } catch {
-      return nil
     }
   }
 
