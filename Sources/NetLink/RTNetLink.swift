@@ -261,6 +261,61 @@ Sendable, CustomStringConvertible,
   public var physicalSwitchID: NLData? {
     NLData(data: rtnl_link_get_phys_switch_id(_obj))
   }
+
+  public enum BridgeOption: Int {
+    case unspec = 0
+    case state // Spanning tree state
+    case priority // Spanning tree priority (UInt16)
+    case cost // Spanning tree cost (UInt32)
+    case mode // Mode (hairpin)
+    case `guard` // BPDU guard
+    case protect // Root port protection
+    case fastLeave // Multicast fast leave
+    case learning // MAC learning
+    case unicastFlood // Flood unicast traffic
+    case proxyARP // Proxy ARP
+    case learningSync // MAC learning sync from device
+    case proxyARPWifi // Proxy ARP for Wi-Fi
+    case rootID // Designated root
+    case bridgeID // Designated bridge
+    case designatedPort
+    case designatedCost
+    case id
+    case no
+    case topologyChangeAck
+    case configPending
+    case messageAgeTimer
+    case forwardDelayTimer
+    case holdTimer
+    case flush
+    case multicastRouter
+    case pad
+    case mcastFlood
+    case mcastToUcast
+    case vlanTunnel
+    case bcastFlood
+    case groupFwdMask
+    case neighSuppress
+    case isolated
+    case backupPort
+    case mrpRingOpen
+    case mrpInOpen
+    case mcastEhtHostsLimit
+    case mcastEhtHostsCnt
+    case locked
+    case mab
+    case mcastNGroups
+    case mcastMaxGroups
+    case neighVlanSuppress
+  }
+
+  public func set(option: BridgeOption, _ value: some Any, socket: NLSocket) async throws {
+    try await socket._setBridgeOption(
+      interfaceIndex: index,
+      option: option.rawValue,
+      value
+    )
+  }
 }
 
 public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
@@ -610,6 +665,32 @@ public extension NLSocket {
 
   func unsubscribeTC() throws {
     try drop(membership: RTNLGRP_TC)
+  }
+
+  fileprivate func _setBridgeOption(
+    interfaceIndex: Int,
+    option: Int,
+    _ value: some Any
+  ) async throws {
+    let message = try NLMessage(
+      socket: self,
+      type: RTM_SETLINK,
+      operation: .update
+    )
+    try message.appendIfInfo(index: interfaceIndex)
+    let attr = message.nestStart(attr: CInt(IFLA_PROTINFO))
+    switch value {
+    case let v as Bool: try message.put(u8: v ? 1 : 0, for: CInt(option))
+    case let v as UInt8: try message.put(u8: v, for: CInt(option))
+    case let v as UInt16: try message.put(u16: v, for: CInt(option))
+    case let v as UInt32: try message.put(u32: v, for: CInt(option))
+    case let v as UInt64: try message.put(u64: v, for: CInt(option))
+    case let v as [UInt8]: try message.put(data: v, for: CInt(option))
+    case let v as String: try message.put(string: v, for: CInt(option))
+    default: throw NLError.invalidArgument
+    }
+    message.nestEnd(attr: attr)
+    try await ackRequest(message: message)
   }
 
   // NLM_F_BULK is not supported for RTM_DELLINK

@@ -33,6 +33,10 @@ let package = Package(
       name: "nltool",
       targets: ["nltool"]
     ),
+    .executable(
+      name: "brport",
+      targets: ["brport"]
+    ),
   ],
   dependencies: [
     .package(url: "https://github.com/PADL/IORingSwift", branch: "main"),
@@ -87,6 +91,12 @@ let package = Package(
       name: "setmacaddr",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
       path: "Examples/setmacaddr",
+      cSettings: PlatformCSettings
+    ),
+    .executableTarget(
+      name: "brport",
+      dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
+      path: "Examples/brport",
       cSettings: PlatformCSettings
     ),
   ]
