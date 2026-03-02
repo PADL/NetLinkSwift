@@ -43,7 +43,7 @@ enum nldump {
       }
     }
     for try await addr in try await socket.getAddresses(family: sa_family_t(AF_INET)) {
-      debugPrint("@\(addr.index) found address \(addr) ")
+      debugPrint("@\(addr.index) found address \(addr) \(try! addr.localAddress.presentationAddress)")
     }
   }
 }
