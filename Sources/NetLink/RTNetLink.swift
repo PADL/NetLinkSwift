@@ -91,7 +91,7 @@ Sendable, CustomStringConvertible,
   }
 
   public var addressString: String {
-    guard address.count == 6 else { return "" }
+    guard let address else { return "" }
     return byteToHex(address[0]) +
       ":" + byteToHex(address[1]) +
       ":" + byteToHex(address[2]) +
@@ -116,9 +116,10 @@ Sendable, CustomStringConvertible,
     return result
   }
 
-  private func _makeAddress(_ addr: OpaquePointer) -> LinkAddress {
+  private func _makeAddress(_ addr: OpaquePointer?) -> LinkAddress? {
+    guard let addr else { return nil }
     let len = Int(nl_addr_get_len(addr))
-    precondition(len == Int(ETH_ALEN))
+    guard len == Int(ETH_ALEN) else { return nil }
     var result = LinkAddress(repeating: 0)
     let bytes = UnsafeBufferPointer(
       start: nl_addr_get_binary_addr(addr).assumingMemoryBound(to: UInt8.self),
@@ -130,7 +131,7 @@ Sendable, CustomStringConvertible,
     return result
   }
 
-  public var address: LinkAddress {
+  public var address: LinkAddress? {
     _makeAddress(rtnl_link_get_addr(_obj))
   }
 
@@ -145,7 +146,7 @@ Sendable, CustomStringConvertible,
     NLAddress(addr: rtnl_link_get_addr(_obj))
   }
 
-  public var broadcastAddress: LinkAddress {
+  public var broadcastAddress: LinkAddress? {
     _makeAddress(rtnl_link_get_broadcast(_obj))
   }
 
