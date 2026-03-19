@@ -228,7 +228,7 @@ private func NLSocket_ErrCB(
   let hdr = err.pointee.msg
   debugPrint("NLSocket_ErrCB: error \(err.pointee)")
   nlSocket.yield(sequence: hdr.nlmsg_seq, with: Result.failure(Errno(rawValue: -err.pointee.error)))
-  return err.pointee.error
+  return CInt(NL_SKIP.rawValue)
 }
 
 public final class NLSocket: @unchecked
