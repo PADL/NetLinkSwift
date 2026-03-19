@@ -39,7 +39,7 @@ let package = Package(
     ),
   ],
   dependencies: [
-    .package(url: "https://github.com/PADL/IORingSwift", branch: "main"),
+    .package(url: "https://github.com/PADL/IORingSwift", from: "1.0.0"),
     .package(url: "https://github.com/apple/swift-async-algorithms", from: "1.0.0"),
     .package(url: "https://github.com/apple/swift-system", from: "1.2.1"),
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),

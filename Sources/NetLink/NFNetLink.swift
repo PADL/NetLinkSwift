@@ -140,7 +140,8 @@ public final class NFNLLog: Sendable {
 
   public init(family: sa_family_t = sa_family_t(AF_BRIDGE), group: UInt16) throws {
     _socket = try NLSocket(protocol: NETLINK_NETFILTER)
-    _log = NLObject(consumingObj: nfnl_log_alloc())
+    guard let logObj = nfnl_log_alloc() else { throw NLError.noMemory }
+    _log = NLObject(consumingObj: logObj)
     try throwingNLError {
       nfnl_log_pf_bind(_socket._sk, UInt8(family))
     }
