@@ -778,8 +778,10 @@ struct NLMessage: ~Copyable {
   }
 
   func append(opaque value: UnsafePointer<some Any>) throws {
-    _ = try withUnsafeBytes(of: value.pointee) { value in
-      try append(Array(value))
+    try withUnsafeBytes(of: value.pointee) { bytes in
+      try throwingNLError {
+        nlmsg_append(_msg, UnsafeMutableRawPointer(mutating: bytes.baseAddress), bytes.count, CInt(NLMSG_ALIGNTO))
+      }
     }
   }
 
