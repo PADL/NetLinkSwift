@@ -248,6 +248,7 @@ Sendable {
   }
 
   let _sk: OpaquePointer!
+  let _queue = DispatchQueue(label: "NLSocket")
   private let _readSource: any DispatchSourceRead
   private let _requests = Mutex<[UInt32: _Request]>([:])
 
@@ -266,7 +267,7 @@ Sendable {
     let fd = nl_socket_get_fd(sk)
     precondition(fd >= 0)
 
-    _readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+    _readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: _queue)
     _readSource.setEventHandler(handler: onReadReady)
 
     nl_socket_modify_cb(
@@ -344,13 +345,15 @@ Sendable {
   }
 
   public func useNextSequenceNumber() -> UInt32 {
-    var nextSequenceNumber: UInt32
+    _queue.sync {
+      var nextSequenceNumber: UInt32
 
-    repeat {
-      nextSequenceNumber = nl_socket_use_seq(_sk)
-    } while nextSequenceNumber == 0
+      repeat {
+        nextSequenceNumber = nl_socket_use_seq(_sk)
+      } while nextSequenceNumber == 0
 
-    return nextSequenceNumber
+      return nextSequenceNumber
+    }
   }
 
   private func _lookup(sequence: UInt32, forceRemove: Bool) -> _Request? {
@@ -858,7 +861,9 @@ struct NLMessage: ~Copyable {
   }
 
   func send(on socket: NLSocket) throws {
-    try throwingNLError { nl_send_auto(socket._sk, _msg) }
+    try socket._queue.sync {
+      try throwingNLError { nl_send_auto(socket._sk, _msg) }
+    }
   }
 
   deinit {
