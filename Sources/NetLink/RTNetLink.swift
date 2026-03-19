@@ -514,7 +514,7 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
     guard let bpv = _bridgePortVLAN else { return nil }
 
     return withUnsafePointer(to: bpv.vlan_bitmap) { pointer in
-      let start = pointer.propertyBasePointer(to: \.0)!
+      let start = UnsafeRawPointer(pointer).assumingMemoryBound(to: UInt32.self)
       let bitmap = [UInt32](UnsafeBufferPointer(
         start: start,
         count: Int(RTNL_LINK_BRIDGE_VLAN_BITMAP_LEN)
@@ -527,7 +527,7 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
     guard let bpv = _bridgePortVLAN else { return nil }
 
     return withUnsafePointer(to: bpv.untagged_bitmap) { pointer in
-      let start = pointer.propertyBasePointer(to: \.0)!
+      let start = UnsafeRawPointer(pointer).assumingMemoryBound(to: UInt32.self)
       let bitmap = [UInt32](UnsafeBufferPointer(
         start: start,
         count: Int(RTNL_LINK_BRIDGE_VLAN_BITMAP_LEN)
