@@ -230,7 +230,7 @@ Sendable {
   private typealias Continuation = CheckedContinuation<NLObjectConstructible, Error>
   private typealias Stream = AsyncThrowingStream<NLObjectConstructible, Error>
   private typealias Ack = CheckedContinuation<(), Error>
-  public typealias Channel = AsyncThrowingChannel<NLObjectConstructible, Error>
+  public typealias NotificationStream = AsyncThrowingStream<NLObjectConstructible, Error>
 
   private enum _Request {
     case continuation(Continuation)
@@ -252,9 +252,14 @@ Sendable {
   private let _readSource: any DispatchSourceRead
   private let _requests = Mutex<[UInt32: _Request]>([:])
 
-  public let notifications = Channel()
+  private let _notificationsContinuation: NotificationStream.Continuation
+  public let notifications: NotificationStream
 
   public init(protocol: Int32) throws {
+    var continuation: NotificationStream.Continuation!
+    notifications = NotificationStream(bufferingPolicy: .unbounded) { continuation = $0 }
+    _notificationsContinuation = continuation
+
     guard let sk = nl_socket_alloc() else { throw NLError.noMemory }
     nl_socket_disable_seq_check(sk)
     _sk = sk
@@ -303,6 +308,7 @@ Sendable {
 
   deinit {
     _readSource.cancel()
+    _notificationsContinuation.finish()
     nl_socket_free(_sk)
   }
 
@@ -408,13 +414,7 @@ Sendable {
         }
       }
     } else {
-      Task {
-        do {
-          try await notifications.send(result.get())
-        } catch {
-          notifications.fail(error)
-        }
-      }
+      _notificationsContinuation.yield(with: result)
     }
   }
 
