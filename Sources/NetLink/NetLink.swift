@@ -73,16 +73,22 @@ Sendable, Equatable, Hashable, CustomStringConvertible {
     try withUnsafeMutablePointer(to: &obj) { objRef in
       _ = try throwingNLError {
         nl_msg_parse(msg, { obj, objRef in
-          nl_object_get(obj)
-          objRef!
+          let ptr = objRef!
             .withMemoryRebound(
-              to: OpaquePointer.self,
+              to: OpaquePointer?.self,
               capacity: 1
-            ) { objRef in
-              objRef.pointee = obj!
-            }
+            ) { $0 }
+          if let existing = ptr.pointee {
+            nl_object_put(existing)
+          }
+          nl_object_get(obj)
+          ptr.pointee = obj
         }, objRef)
       }
+    }
+
+    guard obj != nil else {
+      throw NLError.invalidArgument
     }
 
     self.init(obj: obj, constructFromObject: constructFromObject)
