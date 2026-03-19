@@ -475,7 +475,12 @@ Sendable {
       }
       stream = _stream
     }
-    try message.send(on: self)
+    do {
+      try message.send(on: self)
+    } catch {
+      _requests.withLock { $0.removeValue(forKey: sequence) }
+      throw error
+    }
     return stream
   }
 }
