@@ -406,20 +406,54 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
     )
   }
 
+  /// Per-entry MDB flags carried in the `MDBE_ATTR_FLAGS` (NLA_U32) input
+  /// attribute. The bridge core treats these as metadata propagated to
+  /// switchdev so hardware can apply its own admission policy.
+  public struct MDBFlags: OptionSet, Sendable {
+    public let rawValue: UInt32
+
+    public init(rawValue: UInt32) {
+      self.rawValue = rawValue
+    }
+
+    /// `MDB_FLAGS_STREAM_RESERVED` — mark the entry as belonging to a
+    /// reserved stream (e.g. IEEE 1722 / 802.1Q SR). Kernels that do not
+    /// recognise the attribute reject the request with `EINVAL`; callers
+    /// using `add(link:groupAddresses:flags:…)` get an automatic retry
+    /// without the flag.
+    public static let streamReserved = MDBFlags(rawValue: 1 << 5)
+  }
+
   public func add(
     link: RTNLLink,
     groupAddresses: [LinkAddress],
     vlanID: UInt16? = nil,
+    flags: MDBFlags = [],
     updateIfPresent: Bool = true,
     socket: NLSocket
   ) async throws {
-    try await socket._groupRequest(
-      bridgeIndex: index,
-      interfaceIndex: link.index,
-      groupAddresses: groupAddresses,
-      vlanID: vlanID,
-      operation: updateIfPresent ? .addOrUpdate : .add
-    )
+    let operation: NLMessage.Operation = updateIfPresent ? .addOrUpdate : .add
+    do {
+      try await socket._groupRequest(
+        bridgeIndex: index,
+        interfaceIndex: link.index,
+        groupAddresses: groupAddresses,
+        vlanID: vlanID,
+        mdbFlags: flags,
+        operation: operation
+      )
+    } catch let error as Errno where error == .invalidArgument && !flags.isEmpty {
+      // Older kernels reject the unknown MDBE_ATTR_FLAGS with EINVAL under
+      // strict netlink validation. Fall back to the no-flag variant.
+      try await socket._groupRequest(
+        bridgeIndex: index,
+        interfaceIndex: link.index,
+        groupAddresses: groupAddresses,
+        vlanID: vlanID,
+        mdbFlags: [],
+        operation: operation
+      )
+    }
   }
 
   public func remove(
@@ -433,6 +467,7 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
       interfaceIndex: link.index,
       groupAddresses: groupAddresses,
       vlanID: vlanID,
+      mdbFlags: [],
       operation: .delete
     )
   }
@@ -741,9 +776,15 @@ public extension NLSocket {
     interfaceIndex: Int,
     groupAddresses: [RTNLLink.LinkAddress],
     vlanID: UInt16? = nil,
-    flags: UInt8 = 0,
+    mdbFlags: RTNLLinkBridge.MDBFlags = [],
     operation: NLMessage.Operation
   ) async throws {
+    // The kernel UAPI for the input-side MDB flags bitmask is a nested
+    // attribute, MDBA_SET_ENTRY_ATTRS → MDBE_ATTR_FLAGS (NLA_U32). Define
+    // them inline so we do not need an MDBE_ATTR_FLAGS in the build host's
+    // <linux/if_bridge.h>; older host headers will not have it.
+    let MDBE_ATTR_FLAGS: CInt = 11
+
     let message = try NLMessage(
       socket: self,
       type: operation != .delete ? RTM_NEWMDB : RTM_DELMDB,
@@ -756,7 +797,7 @@ public extension NLSocket {
     var entry = br_mdb_entry(
       ifindex: UInt32(interfaceIndex),
       state: UInt8(MDB_PERMANENT),
-      flags: flags,
+      flags: 0,
       vid: vlanID ?? 0,
       addr: .init()
     )
@@ -770,6 +811,11 @@ public extension NLSocket {
     for groupAddress in groupAddresses {
       entry.addr.u.mac_addr = linkAddressToTuple(groupAddress)
       try message.put(opaque: &entry, for: CInt(MDBA_MDB_ENTRY))
+    }
+    if !mdbFlags.isEmpty {
+      let attrs = message.nestStart(attr: CInt(MDBA_SET_ENTRY_ATTRS))
+      try message.put(u32: mdbFlags.rawValue, for: MDBE_ATTR_FLAGS)
+      message.nestEnd(attr: attrs)
     }
     try await ackRequest(message: message)
   }
