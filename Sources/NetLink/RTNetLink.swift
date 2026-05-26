@@ -1457,3 +1457,275 @@ extension UnsafePointer {
     return (UnsafeRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
   }
 }
+
+private func _hex(_ byte: UInt8) -> String {
+  let hex = Array("0123456789abcdef".utf8)
+  return String(unsafeUninitializedCapacity: 2) { ptr in
+    ptr[0] = hex[Int(byte / 16)]
+    ptr[1] = hex[Int(byte % 16)]
+    return 2
+  }
+}
+
+private func _hex(_ value: UInt16) -> String {
+  _hex(UInt8(value >> 8)) + _hex(UInt8(value & 0xff))
+}
+
+private func _nlAddrToBytes(_ addr: OpaquePointer?) -> (sa_family_t, [UInt8])? {
+  guard let addr else { return nil }
+  let len = Int(nl_addr_get_len(addr))
+  guard len > 0 else { return (sa_family_t(nl_addr_get_family(addr)), []) }
+  let buf = UnsafeBufferPointer(
+    start: nl_addr_get_binary_addr(addr).assumingMemoryBound(to: UInt8.self),
+    count: len
+  )
+  return (sa_family_t(nl_addr_get_family(addr)), Array(buf))
+}
+
+private func _nlAddrToMac(_ addr: OpaquePointer?) -> RTNLLink.LinkAddress? {
+  guard let addr else { return nil }
+  guard Int(nl_addr_get_len(addr)) == Int(ETH_ALEN) else { return nil }
+  var result = RTNLLink.LinkAddress(repeating: 0)
+  let bytes = UnsafeBufferPointer(
+    start: nl_addr_get_binary_addr(addr).assumingMemoryBound(to: UInt8.self),
+    count: 6
+  )
+  for i in 0..<6 { result[i] = bytes[i] }
+  return result
+}
+
+public final class RTNLNeighbor: NLObjectConstructible, @unchecked Sendable,
+  CustomStringConvertible, RTNLFactory
+{
+  private let _object: NLObject
+
+  fileprivate init(_ object: NLObject) {
+    _object = object
+  }
+
+  public required convenience init(object: NLObject) throws {
+    guard object.messageType == RTM_NEWNEIGH || object.messageType == RTM_DELNEIGH
+    else {
+      throw NLError.invalidArgument
+    }
+    self.init(object)
+  }
+
+  fileprivate var _obj: OpaquePointer { _object._obj }
+
+  public var family: sa_family_t {
+    sa_family_t(rtnl_neigh_get_family(_obj))
+  }
+
+  public var ifIndex: Int {
+    Int(rtnl_neigh_get_ifindex(_obj))
+  }
+
+  public var master: Int {
+    Int(rtnl_neigh_get_master(_obj))
+  }
+
+  public var state: Int {
+    Int(rtnl_neigh_get_state(_obj))
+  }
+
+  public var flags: UInt32 {
+    UInt32(rtnl_neigh_get_flags(_obj))
+  }
+
+  public var vlanID: Int? {
+    let v = Int(rtnl_neigh_get_vlan(_obj))
+    return v < 0 ? nil : v
+  }
+
+  public var linkLayerAddress: RTNLLink.LinkAddress? {
+    _nlAddrToMac(rtnl_neigh_get_lladdr(_obj))
+  }
+
+  public var destinationAddress: (sa_family_t, [UInt8])? {
+    _nlAddrToBytes(rtnl_neigh_get_dst(_obj))
+  }
+
+  public static func stateString(_ state: Int) -> String {
+    var buf = [CChar](repeating: 0, count: 128)
+    let r = buf.withUnsafeMutableBufferPointer {
+      rtnl_neigh_state2str(Int32(state), $0.baseAddress, $0.count)
+    }
+    return r.map { String(cString: $0) } ?? ""
+  }
+
+  public static func flagsString(_ flags: UInt32) -> String {
+    var buf = [CChar](repeating: 0, count: 128)
+    let r = buf.withUnsafeMutableBufferPointer {
+      rtnl_neigh_flags2str(Int32(flags), $0.baseAddress, $0.count)
+    }
+    return r.map { String(cString: $0) } ?? ""
+  }
+
+  public var description: String {
+    let mac = linkLayerAddress.map { addr in
+      (0..<6).map { _hex(addr[$0]) }.joined(separator: ":")
+    } ?? "?"
+    return "RTNLNeighbor(if: \(ifIndex), master: \(master), lladdr: \(mac), vlan: \(vlanID.map(String.init) ?? "-"), state: \(Self.stateString(state)), flags: \(Self.flagsString(flags)))"
+  }
+}
+
+public enum RTNLNeighborMessage: NLObjectConstructible, Sendable {
+  case new(RTNLNeighbor)
+  case del(RTNLNeighbor)
+
+  public init(object: NLObject) throws {
+    switch object.messageType {
+    case RTM_NEWNEIGH:
+      self = try .new(RTNLNeighbor(object: object))
+    case RTM_DELNEIGH:
+      self = try .del(RTNLNeighbor(object: object))
+    default:
+      throw NLError.invalidArgument
+    }
+  }
+
+  public var neighbor: RTNLNeighbor {
+    switch self {
+    case let .new(n): n
+    case let .del(n): n
+    }
+  }
+}
+
+public struct RTNLMDBEntry: Sendable, CustomStringConvertible {
+  public let ifIndex: Int
+  public let vid: UInt16
+  public let state: UInt8
+  public let proto: UInt16
+  public let addressFamily: sa_family_t
+  public let address: [UInt8]
+
+  public var isPermanent: Bool { state == UInt8(MDB_PERMANENT) }
+
+  public var macAddress: RTNLLink.LinkAddress? {
+    guard address.count == 6 else { return nil }
+    var result = RTNLLink.LinkAddress(repeating: 0)
+    for i in 0..<6 { result[i] = address[i] }
+    return result
+  }
+
+  public var addressString: String {
+    if address.count == 6 {
+      return (0..<6).map { _hex(address[$0]) }.joined(separator: ":")
+    }
+    return address.map { _hex($0) }.joined()
+  }
+
+  public var description: String {
+    "RTNLMDBEntry(if: \(ifIndex), vid: \(vid), proto: 0x\(_hex(proto)), addr: \(addressString), \(isPermanent ? "permanent" : "temporary"))"
+  }
+}
+
+public final class RTNLMDB: NLObjectConstructible, @unchecked Sendable,
+  CustomStringConvertible, RTNLFactory
+{
+  private let _object: NLObject
+  public let entries: [RTNLMDBEntry]
+
+  fileprivate init(_ object: NLObject) {
+    _object = object
+
+    final class Collector {
+      var entries: [RTNLMDBEntry] = []
+    }
+    let collector = Collector()
+    let arg = Unmanaged.passUnretained(collector).toOpaque()
+    rtnl_mdb_foreach_entry(_object._obj, { entryPtr, ctx in
+      guard let entryPtr, let ctx else { return }
+      let collector = Unmanaged<Collector>.fromOpaque(ctx).takeUnretainedValue()
+      let addr = rtnl_mdb_entry_get_addr(entryPtr)
+      let parsed = _nlAddrToBytes(addr) ?? (sa_family_t(0), [])
+      let entry = RTNLMDBEntry(
+        ifIndex: Int(rtnl_mdb_entry_get_ifindex(entryPtr)),
+        vid: UInt16(truncatingIfNeeded: rtnl_mdb_entry_get_vid(entryPtr)),
+        state: UInt8(truncatingIfNeeded: rtnl_mdb_entry_get_state(entryPtr)),
+        proto: rtnl_mdb_entry_get_proto(entryPtr),
+        addressFamily: parsed.0,
+        address: parsed.1
+      )
+      collector.entries.append(entry)
+    }, arg)
+    entries = collector.entries
+  }
+
+  public required convenience init(object: NLObject) throws {
+    // The bridge MDB dump emits messages with type RTM_GETMDB (the kernel
+    // reuses the request type in the dump response, unlike most other
+    // rtnetlink dumps which switch to RTM_NEW…). Accept it here so the
+    // streaming dump in `NLSocket.getMDB()` does not reject every entry.
+    switch object.messageType {
+    case RTM_NEWMDB, RTM_DELMDB, RTM_GETMDB:
+      break
+    default:
+      throw NLError.invalidArgument
+    }
+    self.init(object)
+  }
+
+  fileprivate var _obj: OpaquePointer { _object._obj }
+
+  public var bridgeIndex: Int {
+    Int(rtnl_mdb_get_ifindex(_obj))
+  }
+
+  public var description: String {
+    "RTNLMDB(bridge: \(bridgeIndex), entries: \(entries.count))"
+  }
+}
+
+public enum RTNLMDBMessage: NLObjectConstructible, Sendable {
+  case new(RTNLMDB)
+  case del(RTNLMDB)
+
+  public init(object: NLObject) throws {
+    switch object.messageType {
+    case RTM_NEWMDB, RTM_GETMDB:
+      // RTM_GETMDB is the message type the kernel uses for dump responses.
+      self = try .new(RTNLMDB(object: object))
+    case RTM_DELMDB:
+      self = try .del(RTNLMDB(object: object))
+    default:
+      throw NLError.invalidArgument
+    }
+  }
+
+  public var mdb: RTNLMDB {
+    switch self {
+    case let .new(m): m
+    case let .del(m): m
+    }
+  }
+}
+
+public extension NLSocket {
+  func getNeighbors(family: sa_family_t = sa_family_t(AF_UNSPEC)) async throws
+    -> AnyAsyncSequence<RTNLNeighbor>
+  {
+    let message = try NLMessage(socket: self, type: RTM_GETNEIGH, flags: .dump)
+    var hdr = ndmsg()
+    hdr.ndm_family = UInt8(family)
+    try withUnsafeBytes(of: &hdr) {
+      try message.append(Array($0))
+    }
+    return try streamRequest(message: message)
+      .map { ($0 as! RTNLNeighborMessage).neighbor }
+      .eraseToAnyAsyncSequence()
+  }
+
+  func getMDB() async throws -> AnyAsyncSequence<RTNLMDB> {
+    let message = try NLMessage(socket: self, type: RTM_GETMDB, flags: .dump)
+    var hdr = br_port_msg(family: UInt8(AF_BRIDGE), ifindex: 0)
+    try withUnsafeBytes(of: &hdr) {
+      try message.append(Array($0))
+    }
+    return try streamRequest(message: message)
+      .map { ($0 as! RTNLMDBMessage).mdb }
+      .eraseToAnyAsyncSequence()
+  }
+}

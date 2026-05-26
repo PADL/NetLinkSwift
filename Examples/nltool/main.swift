@@ -24,21 +24,32 @@ import SystemPackage
 enum Command: CaseIterable {
   case add_vlan
   case del_vlan
+  case show_vlan
   case add_fdb
   case del_fdb
+  case show_fdb
   case add_mdb
+  case add_srp_mdb
   case del_mdb
+  case show_mdb
   case add_mqprio
   case del_mqprio
   case add_cbs
   case del_cbs
+
+  var needsArg: Bool {
+    switch self {
+    case .show_vlan, .show_fdb, .show_mdb: false
+    default: true
+    }
+  }
 }
 
 typealias CommandHandler = (Command, NLSocket, RTNLLink, String) async throws -> ()
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|add_fdb|del_fdb|add_mdb|del_mdb|add_mqprio|del_mqprio|add_cbs|del_cbs] [ifname] [vid|mac-address|parent:handle]"
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|show_vlan|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|add_cbs|del_cbs] [ifname] [vid|mac-address|parent:handle]"
   )
   exit(1)
 }
@@ -119,7 +130,13 @@ func add_mdb(
 ) async throws {
   let bridge = try await findBridge(index: link.master, socket: socket)
   let groupAddress = try RTNLLink.parseMacAddressString(arg)
-  try await bridge.add(link: link, groupAddresses: [groupAddress], socket: socket)
+  let flags: RTNLLinkBridge.MDBFlags = command == .add_srp_mdb ? [.streamReserved] : []
+  try await bridge.add(
+    link: link,
+    groupAddresses: [groupAddress],
+    flags: flags,
+    socket: socket
+  )
 }
 
 func del_mdb(
@@ -131,6 +148,99 @@ func del_mdb(
   let bridge = try await findBridge(index: link.master, socket: socket)
   let groupAddress = try RTNLLink.parseMacAddressString(arg)
   try await bridge.remove(link: link, groupAddresses: [groupAddress], socket: socket)
+}
+
+func formatMac(_ addr: RTNLLink.LinkAddress) -> String {
+  func hex(_ b: UInt8) -> String {
+    let h = Array("0123456789abcdef".utf8)
+    return String(unsafeUninitializedCapacity: 2) { p in
+      p[0] = h[Int(b / 16)]; p[1] = h[Int(b % 16)]; return 2
+    }
+  }
+  return (0..<6).map { hex(addr[$0]) }.joined(separator: ":")
+}
+
+func show_vlan(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  guard let bridge = link as? RTNLLinkBridge else {
+    print("interface \(link.name) is not a bridge port")
+    throw Errno.invalidArgument
+  }
+  let tagged = bridge.bridgeTaggedVLANs ?? []
+  let untagged = bridge.bridgeUntaggedVLANs ?? []
+  let pvid = bridge.bridgePVID
+  print(
+    "bridge port \(link.name) (ifindex \(link.index)) master \(link.master) bridge-flags 0x\(String(bridge.bridgeFlags, radix: 16)) port-state \(bridge.bridgePortState) pvid \(pvid.map(String.init) ?? "none") hasVLAN \(bridge.bridgeHasVLAN)"
+  )
+  if tagged.isEmpty {
+    print("  (no VLANs)")
+    return
+  }
+  for vid in tagged.sorted() {
+    var flags: [String] = []
+    if untagged.contains(vid) { flags.append("untagged") }
+    if pvid == vid { flags.append("PVID") }
+    if flags.isEmpty { flags.append("tagged") }
+    print("  vid \(vid) [\(flags.joined(separator: ", "))]")
+  }
+}
+
+func show_fdb(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  // Match FDB entries on this interface or with this bridge as master.
+  var any = false
+  for try await neigh in try await socket.getNeighbors(family: sa_family_t(AF_BRIDGE)) {
+    guard neigh.ifIndex == link.index || neigh.master == link.index else { continue }
+    any = true
+    let mac = neigh.linkLayerAddress.map(formatMac) ?? "?"
+    let vlan = neigh.vlanID.map(String.init) ?? "-"
+    let state = RTNLNeighbor.stateString(neigh.state)
+    let flags = RTNLNeighbor.flagsString(neigh.flags)
+    print(
+      "  dev-ifindex \(neigh.ifIndex) master \(neigh.master) lladdr \(mac) vlan \(vlan) state \(state) flags \(flags)"
+    )
+  }
+  if !any { print("  (no FDB entries)") }
+}
+
+func show_mdb(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  // The bridge MDB dump emits one rtnl_mdb per bridge device. If `link` is
+  // a bridge master (no upper master of its own), filter by its own
+  // ifindex; if it is a bridge port (slave), filter by its master.
+  let bridgeIndex: Int
+  if link is RTNLLinkBridge, link.master == 0 || link.master == link.index {
+    bridgeIndex = link.index
+  } else if link.master != 0 {
+    bridgeIndex = link.master
+  } else {
+    print("interface \(link.name) is not a bridge or bridge port")
+    throw Errno.invalidArgument
+  }
+  var any = false
+  for try await mdb in try await socket.getMDB() {
+    guard mdb.bridgeIndex == bridgeIndex else { continue }
+    for entry in mdb.entries {
+      any = true
+      let state = entry.isPermanent ? "permanent" : "temporary"
+      print(
+        "  port-ifindex \(entry.ifIndex) vid \(entry.vid) proto 0x\(String(entry.proto, radix: 16)) addr \(entry.addressString) flags [\(state)]"
+      )
+    }
+  }
+  if !any { print("  (no MDB entries)") }
 }
 
 func stringToHandle(_ string: String) throws -> (UInt32, UInt32) {
@@ -228,13 +338,17 @@ private var gSocket: NLSocket!
 @main
 enum nltool {
   public static func main() async throws {
-    if CommandLine.arguments.count < 4 {
+    if CommandLine.arguments.count < 3 {
       usage()
     }
 
     guard let command = Command.allCases
       .first(where: { String(describing: $0) == CommandLine.arguments[1] })
     else {
+      usage()
+    }
+
+    if command.needsArg, CommandLine.arguments.count < 4 {
       usage()
     }
 
@@ -245,17 +359,22 @@ enum nltool {
       let commands: [Command: CommandHandler] = [
         .add_vlan: add_vlan,
         .del_vlan: del_vlan,
+        .show_vlan: show_vlan,
         .add_fdb: add_fdb,
         .del_fdb: del_fdb,
+        .show_fdb: show_fdb,
         .add_mdb: add_mdb,
+        .add_srp_mdb: add_mdb,
         .del_mdb: del_mdb,
+        .show_mdb: show_mdb,
         .add_mqprio: add_mqprio,
         .del_mqprio: del_mqprio,
         .add_cbs: add_cbs,
         .del_cbs: del_cbs,
       ]
       let commandHandler = commands[command]!
-      try await commandHandler(command, socket, link, CommandLine.arguments[3])
+      let arg = CommandLine.arguments.count >= 4 ? CommandLine.arguments[3] : ""
+      try await commandHandler(command, socket, link, arg)
     } catch {
       print("failed to \(command): \(error)")
       exit(3)

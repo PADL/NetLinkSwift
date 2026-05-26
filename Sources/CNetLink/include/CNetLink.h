@@ -21,6 +21,7 @@
 #include <netlink/route/class.h>
 #include <netlink/route/link.h>
 #include <netlink/route/mdb.h>
+#include <netlink/route/neighbour.h>
 #include <netlink/route/netconf.h>
 #include <netlink/route/qdisc.h>
 #include <netlink/route/qdisc/fifo.h>
