@@ -185,12 +185,21 @@ private func NLSocket_CB_VALID(
         fallthrough
       case RTM_NEWNEIGH:
         constructFromObject = RTNLNeighborMessage.init
-      case RTM_DELMDB:
-        fallthrough
-      case RTM_GETMDB:
-        fallthrough
-      case RTM_NEWMDB:
-        constructFromObject = RTNLMDBMessage.init
+      case RTM_DELMDB, RTM_GETMDB, RTM_NEWMDB:
+        // Bypass libnl's MDB parser: its rtnl_mdb_entry struct does not
+        // expose the per-entry flag byte (MDB_FLAGS_*), so we parse the
+        // raw netlink message ourselves.
+        do {
+          let mdb = try RTNLMDB(rawHeader: nlmsg_hdr(msg)!)
+          let mdbMsg: RTNLMDBMessage = hdr.nlmsg_type == UInt16(RTM_DELMDB)
+            ? .del(mdb)
+            : .new(mdb)
+          nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .success(mdbMsg))
+        } catch {
+          nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .failure(error))
+          return CInt(NL_SKIP.rawValue)
+        }
+        return CInt(NL_OK.rawValue)
       default:
         debugPrint("NLSocket_CB_VALID: unknown NETLINK_ROUTE message type \(hdr.nlmsg_type)")
         throw NLError.invalidArgument
@@ -414,10 +423,23 @@ Sendable {
     sequence: UInt32,
     with result: Result<NLObject, Error>
   ) {
-    let result: Result<NLObjectConstructible, Error> = result.flatMap { result in
+    let constructible: Result<NLObjectConstructible, Error> = result.flatMap { result in
       Result(catching: { try result.construct() })
     }
+    _yield(sequence: sequence, with: constructible)
+  }
 
+  fileprivate func yield(
+    sequence: UInt32,
+    withConstructible result: Result<NLObjectConstructible, Error>
+  ) {
+    _yield(sequence: sequence, with: result)
+  }
+
+  private func _yield(
+    sequence: UInt32,
+    with result: Result<NLObjectConstructible, Error>
+  ) {
     if sequence != 0, let request = _lookup(sequence: sequence, forceRemove: false) {
       switch request {
       case let .continuation(continuation):

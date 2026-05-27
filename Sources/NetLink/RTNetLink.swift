@@ -1597,11 +1597,16 @@ public struct RTNLMDBEntry: Sendable, CustomStringConvertible {
   public let ifIndex: Int
   public let vid: UInt16
   public let state: UInt8
+  public let flags: UInt8
   public let proto: UInt16
   public let addressFamily: sa_family_t
   public let address: [UInt8]
 
   public var isPermanent: Bool { state == UInt8(MDB_PERMANENT) }
+
+  /// True if the per-entry `MDB_FLAGS_STREAM_RESERVED` bit is set
+  /// (kernel UAPI `MDB_FLAGS_STREAM_RESERVED = (1 << 5)`).
+  public var isStreamReserved: Bool { (flags & (1 << 5)) != 0 }
 
   public var macAddress: RTNLLink.LinkAddress? {
     guard address.count == 6 else { return nil }
@@ -1618,60 +1623,113 @@ public struct RTNLMDBEntry: Sendable, CustomStringConvertible {
   }
 
   public var description: String {
-    "RTNLMDBEntry(if: \(ifIndex), vid: \(vid), proto: 0x\(_hex(proto)), addr: \(addressString), \(isPermanent ? "permanent" : "temporary"))"
+    "RTNLMDBEntry(if: \(ifIndex), vid: \(vid), proto: 0x\(_hex(proto)), addr: \(addressString), \(isPermanent ? "permanent" : "temporary"), flags: 0x\(_hex(flags)))"
   }
 }
 
+/// Bridge MDB representation. Built by parsing the raw netlink message
+/// (`RTM_*MDB`) directly — libnl's `rtnl_mdb_entry` API omits the per-entry
+/// flag byte, so we bypass it for dumps and notifications.
 public final class RTNLMDB: NLObjectConstructible, @unchecked Sendable,
   CustomStringConvertible, RTNLFactory
 {
-  private let _object: NLObject
+  public let bridgeIndex: Int
   public let entries: [RTNLMDBEntry]
 
-  fileprivate init(_ object: NLObject) {
-    _object = object
-
-    final class Collector {
-      var entries: [RTNLMDBEntry] = []
-    }
-    let collector = Collector()
-    let arg = Unmanaged.passUnretained(collector).toOpaque()
-    rtnl_mdb_foreach_entry(_object._obj, { entryPtr, ctx in
-      guard let entryPtr, let ctx else { return }
-      let collector = Unmanaged<Collector>.fromOpaque(ctx).takeUnretainedValue()
-      let addr = rtnl_mdb_entry_get_addr(entryPtr)
-      let parsed = _nlAddrToBytes(addr) ?? (sa_family_t(0), [])
-      let entry = RTNLMDBEntry(
-        ifIndex: Int(rtnl_mdb_entry_get_ifindex(entryPtr)),
-        vid: UInt16(truncatingIfNeeded: rtnl_mdb_entry_get_vid(entryPtr)),
-        state: UInt8(truncatingIfNeeded: rtnl_mdb_entry_get_state(entryPtr)),
-        proto: rtnl_mdb_entry_get_proto(entryPtr),
-        addressFamily: parsed.0,
-        address: parsed.1
-      )
-      collector.entries.append(entry)
-    }, arg)
-    entries = collector.entries
+  init(bridgeIndex: Int, entries: [RTNLMDBEntry]) {
+    self.bridgeIndex = bridgeIndex
+    self.entries = entries
   }
 
+  /// Not used — MDB messages are parsed directly from the raw nlmsg in
+  /// `NLSocket_CB_VALID`. The conformance is kept so RTNLMDB still satisfies
+  /// `NLObjectConstructible`.
   public required convenience init(object: NLObject) throws {
-    // The bridge MDB dump emits messages with type RTM_GETMDB (the kernel
-    // reuses the request type in the dump response, unlike most other
-    // rtnetlink dumps which switch to RTM_NEW…). Accept it here so the
-    // streaming dump in `NLSocket.getMDB()` does not reject every entry.
-    switch object.messageType {
-    case RTM_NEWMDB, RTM_DELMDB, RTM_GETMDB:
-      break
-    default:
+    throw NLError.invalidArgument
+  }
+
+  convenience init(rawHeader nlh: UnsafeMutablePointer<nlmsghdr>) throws {
+    let payload = nlmsg_data(nlh)
+    let payloadLen = Int(nlmsg_datalen(nlh))
+    guard let payload, payloadLen >= MemoryLayout<br_port_msg>.size else {
       throw NLError.invalidArgument
     }
-    self.init(object)
+    let portMsg = payload.assumingMemoryBound(to: br_port_msg.self).pointee
+    let entries = RTNLMDB._parseEntries(
+      nlh: nlh,
+      hdrlen: CInt(MemoryLayout<br_port_msg>.size)
+    )
+    self.init(bridgeIndex: Int(portMsg.ifindex), entries: entries)
   }
 
-  fileprivate var _obj: OpaquePointer { _object._obj }
+  private static func _parseEntries(
+    nlh: UnsafeMutablePointer<nlmsghdr>,
+    hdrlen: CInt
+  ) -> [RTNLMDBEntry] {
+    var entries: [RTNLMDBEntry] = []
+    var attrRem = nlmsg_attrlen(nlh, hdrlen)
+    var attrPos = nlmsg_attrdata(nlh, hdrlen)
+    while nla_ok(attrPos, attrRem) != 0 {
+      defer { attrPos = nla_next(attrPos, &attrRem) }
+      guard let mdbAttr = attrPos,
+            nla_type(mdbAttr) == CInt(MDBA_MDB) else { continue }
 
-  public var bridgeIndex: Int {
-    Int(rtnl_mdb_get_ifindex(_obj))
+      var entryRem = nla_len(mdbAttr)
+      var entryPos = nla_data(mdbAttr)?
+        .assumingMemoryBound(to: nlattr.self)
+      while nla_ok(entryPos, entryRem) != 0 {
+        defer { entryPos = nla_next(entryPos, &entryRem) }
+        guard let entryAttr = entryPos,
+              nla_type(entryAttr) == CInt(MDBA_MDB_ENTRY) else { continue }
+
+        var infoRem = nla_len(entryAttr)
+        var infoPos = nla_data(entryAttr)?
+          .assumingMemoryBound(to: nlattr.self)
+        while nla_ok(infoPos, infoRem) != 0 {
+          defer { infoPos = nla_next(infoPos, &infoRem) }
+          guard let infoAttr = infoPos,
+                nla_type(infoAttr) == CInt(MDBA_MDB_ENTRY_INFO),
+                let infoData = nla_data(infoAttr),
+                Int(nla_len(infoAttr)) >= MemoryLayout<br_mdb_entry>.size
+          else { continue }
+          let e = infoData.assumingMemoryBound(to: br_mdb_entry.self).pointee
+          entries.append(_makeEntry(from: e))
+        }
+      }
+    }
+    return entries
+  }
+
+  private static func _makeEntry(from e: br_mdb_entry) -> RTNLMDBEntry {
+    // br_mdb_entry.addr.proto is in network byte order; the address union
+    // carries IPv4, IPv6, or MAC depending on proto. For non-IP protos we
+    // treat the first 6 bytes as a MAC address.
+    let proto = UInt16(bigEndian: e.addr.proto)
+    let family: sa_family_t
+    let address: [UInt8]
+    switch CInt(proto) {
+    case ETH_P_IP:
+      var ip4 = e.addr.u.ip4
+      address = withUnsafeBytes(of: &ip4) { Array($0) }
+      family = sa_family_t(AF_INET)
+    case ETH_P_IPV6:
+      var ip6 = e.addr.u.ip6
+      address = withUnsafeBytes(of: &ip6) { Array($0) }
+      family = sa_family_t(AF_INET6)
+    default:
+      var mac = e.addr.u.mac_addr
+      address = withUnsafeBytes(of: &mac) { Array($0.prefix(6)) }
+      family = sa_family_t(AF_UNSPEC)
+    }
+    return RTNLMDBEntry(
+      ifIndex: Int(e.ifindex),
+      vid: e.vid,
+      state: e.state,
+      flags: e.flags,
+      proto: proto,
+      addressFamily: family,
+      address: address
+    )
   }
 
   public var description: String {
@@ -1683,16 +1741,9 @@ public enum RTNLMDBMessage: NLObjectConstructible, Sendable {
   case new(RTNLMDB)
   case del(RTNLMDB)
 
+  /// Not used — built directly in `NLSocket_CB_VALID` for `RTM_*MDB`.
   public init(object: NLObject) throws {
-    switch object.messageType {
-    case RTM_NEWMDB, RTM_GETMDB:
-      // RTM_GETMDB is the message type the kernel uses for dump responses.
-      self = try .new(RTNLMDB(object: object))
-    case RTM_DELMDB:
-      self = try .del(RTNLMDB(object: object))
-    default:
-      throw NLError.invalidArgument
-    }
+    throw NLError.invalidArgument
   }
 
   public var mdb: RTNLMDB {

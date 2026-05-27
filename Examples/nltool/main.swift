@@ -234,9 +234,11 @@ func show_mdb(
     guard mdb.bridgeIndex == bridgeIndex else { continue }
     for entry in mdb.entries {
       any = true
-      let state = entry.isPermanent ? "permanent" : "temporary"
+      var flags: [String] = []
+      flags.append(entry.isPermanent ? "permanent" : "temporary")
+      if entry.isStreamReserved { flags.append("stream-reserved") }
       print(
-        "  port-ifindex \(entry.ifIndex) vid \(entry.vid) proto 0x\(String(entry.proto, radix: 16)) addr \(entry.addressString) flags [\(state)]"
+        "  port-ifindex \(entry.ifIndex) vid \(entry.vid) proto 0x\(String(entry.proto, radix: 16)) addr \(entry.addressString) flags [\(flags.joined(separator: ", "))]"
       )
     }
   }
