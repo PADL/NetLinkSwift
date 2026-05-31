@@ -308,6 +308,13 @@ Sendable, CustomStringConvertible,
     case mcastNGroups
     case mcastMaxGroups
     case neighVlanSuppress
+    case backupNhid // IFLA_BRPORT_BACKUP_NHID
+    case neighForwardGrat // IFLA_BRPORT_NEIGH_FORWARD_GRAT
+    /// `IFLA_BRPORT_FILTER_STREAM_RESERVED` (numeric value 46) — when set,
+    /// the bridge enforces 802.1Qat stream reservation admission control on
+    /// this ingress port. Kernels without `CONFIG_BRIDGE_8021Q_SRP` reject the
+    /// attribute with `EINVAL` (or `EOPNOTSUPP`); callers should tolerate that.
+    case filterStreamReserved
   }
 
   public func set(option: BridgeOption, _ value: some Any, socket: NLSocket) async throws {
