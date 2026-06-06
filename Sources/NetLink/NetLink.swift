@@ -235,6 +235,20 @@ private func NLSocket_CB_VALID(
       }
     case NETLINK_NETFILTER:
       constructFromObject = NFNLLogMessage.init
+    case NETLINK_GENERIC:
+      // The only genl family used is devlink; dump replies are PORT_NEW.
+      let gnlh = nlmsg_data(nlmsg_hdr(msg)).assumingMemoryBound(to: genlmsghdr.self).pointee
+      guard gnlh.cmd == RTNLDevlink.portNewCommand else {
+        return CInt(NL_OK.rawValue)
+      }
+      do {
+        let port = try RTNLDevlinkPort(rawHeader: nlmsg_hdr(msg)!)
+        nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .success(port))
+      } catch {
+        nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .failure(error))
+        return CInt(NL_SKIP.rawValue)
+      }
+      return CInt(NL_OK.rawValue)
     default:
       debugPrint("NLSocket_CB_VALID: unknown NL message \(nlmsg_get_proto(msg))")
       throw NLError.invalidArgument
