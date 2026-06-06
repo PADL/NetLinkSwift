@@ -36,10 +36,14 @@ enum Command: CaseIterable {
   case del_mqprio
   case add_cbs
   case del_cbs
+  case add_pcp_prio
+  case del_pcp_prio
+  case show_pcp_prio
+  case show_mqprio
 
   var needsArg: Bool {
     switch self {
-    case .show_vlan, .show_fdb, .show_mdb: false
+    case .show_vlan, .show_fdb, .show_mdb, .show_pcp_prio, .show_mqprio: false
     default: true
     }
   }
@@ -49,7 +53,7 @@ typealias CommandHandler = (Command, NLSocket, RTNLLink, String) async throws ->
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|show_vlan|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|add_cbs|del_cbs] [ifname] [vid|mac-address|parent:handle]"
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|show_vlan|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio] [ifname] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
   )
   exit(1)
 }
@@ -334,6 +338,85 @@ func del_cbs(
   )
 }
 
+func stringToDCBApps(_ string: String) throws -> [RTNLDCBApp] {
+  try string.split(separator: ",").map { pair in
+    let s = pair.split(separator: ":")
+    guard s.count == 2, let pcp = UInt8(s[0]), let priority = UInt8(s[1]) else {
+      throw Errno.invalidArgument
+    }
+    return RTNLDCBApp.pcp(pcp, priority: priority)
+  }
+}
+
+func add_pcp_prio(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  let apps = try stringToDCBApps(arg)
+  try await link.add(dcbApps: apps, socket: socket)
+}
+
+func del_pcp_prio(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  let apps = try stringToDCBApps(arg)
+  try await link.remove(dcbApps: apps, socket: socket)
+}
+
+func show_pcp_prio(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  let apps = try await link.getDCBApps(socket: socket)
+  let pcpApps = apps
+    .filter { $0.selector == RTNLDCBApp.pcpSelector }
+    .sorted { $0.protocolID < $1.protocolID }
+  print("ingress PCP -> priority (queue) mapping for \(link.name):")
+  if pcpApps.isEmpty {
+    print("  (no PCP APP entries)")
+  } else {
+    for app in pcpApps {
+      print("  pcp \(app.protocolID) -> prio \(app.priority)")
+    }
+  }
+}
+
+func show_mqprio(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  let qdiscs = try await socket.getQDiscs(
+    family: sa_family_t(AF_UNSPEC),
+    interfaceIndex: link.index
+  )
+  var any = false
+  for try await qdisc in qdiscs {
+    guard let mqprio = qdisc as? RTNLMQPrioQDisc else { continue }
+    any = true
+    print("egress MQPRIO mapping for \(link.name) (\(mqprio.numTC) traffic classes):")
+    if let priorityMap = mqprio.priorityMap {
+      for pcp in priorityMap.keys.sorted() {
+        print("  pcp \(pcp) -> tc \(priorityMap[pcp]!)")
+      }
+    }
+    if let (count, offset) = try? mqprio.queues {
+      for tc in 0..<min(count.count, offset.count) {
+        print("  tc \(tc): \(count[tc]) queue(s) at offset \(offset[tc])")
+      }
+    }
+  }
+  if !any { print("  (no MQPRIO qdisc on \(link.name))") }
+}
+
 @MainActor
 private var gSocket: NLSocket!
 
@@ -373,6 +456,10 @@ enum nltool {
         .del_mqprio: del_mqprio,
         .add_cbs: add_cbs,
         .del_cbs: del_cbs,
+        .add_pcp_prio: add_pcp_prio,
+        .del_pcp_prio: del_pcp_prio,
+        .show_pcp_prio: show_pcp_prio,
+        .show_mqprio: show_mqprio,
       ]
       let commandHandler = commands[command]!
       let arg = CommandLine.arguments.count >= 4 ? CommandLine.arguments[3] : ""

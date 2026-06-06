@@ -7,6 +7,7 @@
 #include <linux/filter.h>
 #include <linux/sockios.h>
 #include <linux/if_bridge.h>
+#include <linux/dcbnl.h>
 #include <linux/netfilter/nfnetlink_log.h>
 
 #include <net/if.h>

@@ -200,6 +200,16 @@ private func NLSocket_CB_VALID(
           return CInt(NL_SKIP.rawValue)
         }
         return CInt(NL_OK.rawValue)
+      case RTM_GETDCB:
+        // dcbnl messages are not libnl objects; parse the raw netlink message ourselves.
+        do {
+          let dcb = try RTNLDCB(rawHeader: nlmsg_hdr(msg)!)
+          nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .success(RTNLDCBMessage.get(dcb)))
+        } catch {
+          nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .failure(error))
+          return CInt(NL_SKIP.rawValue)
+        }
+        return CInt(NL_OK.rawValue)
       default:
         debugPrint("NLSocket_CB_VALID: unknown NETLINK_ROUTE message type \(hdr.nlmsg_type)")
         throw NLError.invalidArgument

@@ -1122,6 +1122,19 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
     }
     return priorityMap
   }
+
+  // per-TC queue allocation: count[tc] queues starting at offset[tc]
+  public var queues: (count: [UInt16], offset: [UInt16]) {
+    get throws {
+      var count = [UInt16](repeating: 0, count: Int(TC_QOPT_MAX_QUEUE))
+      var offset = [UInt16](repeating: 0, count: Int(TC_QOPT_MAX_QUEUE))
+      try throwingNLError {
+        rtnl_qdisc_mqprio_get_queue(_obj, &count, &offset)
+      }
+      let n = numTC
+      return (Array(count.prefix(n)), Array(offset.prefix(n)))
+    }
+  }
 }
 
 public final class RTNLTCClassifier: RTNLTCBase, @unchecked Sendable {}
@@ -1420,6 +1433,206 @@ public extension RTNLLink {
         operation: .delete
       )
     }
+  }
+}
+
+/// A DCB application priority table entry (`struct dcb_app`), used to program the
+/// DCBNL IEEE 802.1Qaz APP table. For the PCP selector (`DCB_APP_SEL_PCP`) this maps
+/// an ingress PCP (`protocol`) to an internal priority / queue (`priority`).
+public struct RTNLDCBApp: Sendable, Equatable {
+  public static let pcpSelector = UInt8(DCB_APP_SEL_PCP)
+
+  public var selector: UInt8
+  public var priority: UInt8
+  public var protocolID: UInt16
+
+  public init(selector: UInt8, priority: UInt8, protocolID: UInt16) {
+    self.selector = selector
+    self.priority = priority
+    self.protocolID = protocolID
+  }
+
+  /// Map an ingress PCP value (0-15, where 8-15 carry DEI) to an internal priority/queue.
+  public static func pcp(_ pcp: UInt8, priority: UInt8) -> RTNLDCBApp {
+    RTNLDCBApp(selector: pcpSelector, priority: priority, protocolID: UInt16(pcp))
+  }
+
+  fileprivate var _app: dcb_app {
+    var app = dcb_app()
+    app.selector = selector
+    app.priority = priority
+    app.`protocol` = protocolID
+    return app
+  }
+}
+
+extension NLSocket {
+  fileprivate func _dcbAppRequest(
+    interfaceName: String,
+    apps: [RTNLDCBApp],
+    cmd: UInt8
+  ) async throws {
+    let message = try NLMessage(
+      socket: self,
+      type: Int(RTM_SETDCB),
+      flags: [.request, .ack]
+    )
+    var hdr = dcbmsg()
+    hdr.dcb_family = UInt8(AF_UNSPEC)
+    hdr.cmd = cmd
+    hdr.dcb_pad = 0
+    try message.append(opaque: &hdr)
+
+    try message.put(string: interfaceName, for: CInt(DCB_ATTR_IFNAME.rawValue))
+
+    let ieee = message.nestStart(attr: CInt(DCB_ATTR_IEEE.rawValue))
+    let table = message.nestStart(attr: CInt(DCB_ATTR_IEEE_APP_TABLE.rawValue))
+    for app in apps {
+      // PCP selector entries go in DCB_ATTR_DCB_APP; standard selectors in DCB_ATTR_IEEE_APP.
+      let attr = app.selector == RTNLDCBApp.pcpSelector ?
+        CInt(DCB_ATTR_DCB_APP.rawValue) : CInt(DCB_ATTR_IEEE_APP.rawValue)
+      var entry = app._app
+      try message.put(opaque: &entry, for: attr)
+    }
+    message.nestEnd(attr: table)
+    message.nestEnd(attr: ieee)
+
+    try await ackRequest(message: message)
+  }
+}
+
+public extension RTNLLink {
+  /// Add DCB APP table entries (`DCB_CMD_IEEE_SET`) on this interface.
+  func add(dcbApps: [RTNLDCBApp], socket: NLSocket) async throws {
+    try await socket._dcbAppRequest(
+      interfaceName: name,
+      apps: dcbApps,
+      cmd: UInt8(DCB_CMD_IEEE_SET.rawValue)
+    )
+  }
+
+  /// Remove DCB APP table entries (`DCB_CMD_IEEE_DEL`) from this interface.
+  func remove(dcbApps: [RTNLDCBApp], socket: NLSocket) async throws {
+    try await socket._dcbAppRequest(
+      interfaceName: name,
+      apps: dcbApps,
+      cmd: UInt8(DCB_CMD_IEEE_DEL.rawValue)
+    )
+  }
+
+  /// Fetch the DCB IEEE APP table (`DCB_CMD_IEEE_GET`) for this interface.
+  func getDCBApps(socket: NLSocket) async throws -> [RTNLDCBApp] {
+    try await socket._dcbGetApps(interfaceName: name)
+  }
+}
+
+/// The DCB IEEE APP table returned by a `DCB_CMD_IEEE_GET` query. dcbnl messages are not
+/// libnl objects, so (like MDB) they are parsed directly from the raw netlink message.
+public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomStringConvertible {
+  public let interfaceName: String?
+  public let apps: [RTNLDCBApp]
+
+  init(interfaceName: String?, apps: [RTNLDCBApp]) {
+    self.interfaceName = interfaceName
+    self.apps = apps
+  }
+
+  /// Not used — built directly in `NLSocket_CB_VALID` for `RTM_GETDCB`.
+  public required convenience init(object: NLObject) throws {
+    throw NLError.invalidArgument
+  }
+
+  convenience init(rawHeader nlh: UnsafeMutablePointer<nlmsghdr>) throws {
+    guard Int(nlmsg_datalen(nlh)) >= MemoryLayout<dcbmsg>.size else {
+      throw NLError.invalidArgument
+    }
+    let hdrlen = CInt(MemoryLayout<dcbmsg>.size)
+    var interfaceName: String?
+    var apps = [RTNLDCBApp]()
+
+    var attrRem = nlmsg_attrlen(nlh, hdrlen)
+    var attrPos = nlmsg_attrdata(nlh, hdrlen)
+    while nla_ok(attrPos, attrRem) != 0 {
+      defer { attrPos = nla_next(attrPos, &attrRem) }
+      guard let attr = attrPos else { continue }
+      switch nla_type(attr) {
+      case CInt(DCB_ATTR_IFNAME.rawValue):
+        if let s = nla_get_string(attr) { interfaceName = String(cString: s) }
+      case CInt(DCB_ATTR_IEEE.rawValue):
+        apps.append(contentsOf: RTNLDCB._parseAppTable(ieee: attr))
+      default:
+        break
+      }
+    }
+    self.init(interfaceName: interfaceName, apps: apps)
+  }
+
+  private static func _parseAppTable(ieee: UnsafeMutablePointer<nlattr>) -> [RTNLDCBApp] {
+    var apps = [RTNLDCBApp]()
+    var tableRem = nla_len(ieee)
+    var tablePos = nla_data(ieee)?.assumingMemoryBound(to: nlattr.self)
+    while nla_ok(tablePos, tableRem) != 0 {
+      defer { tablePos = nla_next(tablePos, &tableRem) }
+      guard let table = tablePos,
+            nla_type(table) == CInt(DCB_ATTR_IEEE_APP_TABLE.rawValue) else { continue }
+
+      var appRem = nla_len(table)
+      var appPos = nla_data(table)?.assumingMemoryBound(to: nlattr.self)
+      while nla_ok(appPos, appRem) != 0 {
+        defer { appPos = nla_next(appPos, &appRem) }
+        guard let appAttr = appPos else { continue }
+        let type = nla_type(appAttr)
+        guard type == CInt(DCB_ATTR_IEEE_APP.rawValue) ||
+          type == CInt(DCB_ATTR_DCB_APP.rawValue),
+          let data = nla_data(appAttr),
+          Int(nla_len(appAttr)) >= MemoryLayout<dcb_app>.size else { continue }
+        let a = data.assumingMemoryBound(to: dcb_app.self).pointee
+        apps.append(RTNLDCBApp(
+          selector: a.selector,
+          priority: a.priority,
+          protocolID: a.`protocol`
+        ))
+      }
+    }
+    return apps
+  }
+
+  public var description: String {
+    "RTNLDCB(interface: \(interfaceName ?? "?"), apps: \(apps.count))"
+  }
+}
+
+public enum RTNLDCBMessage: NLObjectConstructible, Sendable {
+  case get(RTNLDCB)
+
+  /// Not used — built directly in `NLSocket_CB_VALID` for `RTM_GETDCB`.
+  public init(object: NLObject) throws {
+    throw NLError.invalidArgument
+  }
+
+  public var dcb: RTNLDCB {
+    switch self {
+    case let .get(d): d
+    }
+  }
+}
+
+extension NLSocket {
+  fileprivate func _dcbGetApps(interfaceName: String) async throws -> [RTNLDCBApp] {
+    let message = try NLMessage(
+      socket: self,
+      type: Int(RTM_GETDCB),
+      flags: [.request]
+    )
+    var hdr = dcbmsg()
+    hdr.dcb_family = UInt8(AF_UNSPEC)
+    hdr.cmd = UInt8(DCB_CMD_IEEE_GET.rawValue)
+    hdr.dcb_pad = 0
+    try message.append(opaque: &hdr)
+    try message.put(string: interfaceName, for: CInt(DCB_ATTR_IFNAME.rawValue))
+
+    let result = try await continuationRequest(message: message)
+    return (result as! RTNLDCBMessage).dcb.apps
   }
 }
 
