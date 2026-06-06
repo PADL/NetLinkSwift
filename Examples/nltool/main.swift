@@ -394,6 +394,12 @@ func show_mqprio(
   link: RTNLLink,
   arg: String
 ) async throws {
+  // The kernel ignores the ifindex filter on RTM_GETQDISC dumps, so resolve each qdisc's own
+  // interface rather than labelling everything with the queried link (e.g. the bridge master).
+  var names = [Int: String]()
+  for try await l in try await socket.getLinks(family: sa_family_t(AF_UNSPEC)) {
+    names[l.index] = l.name
+  }
   let qdiscs = try await socket.getQDiscs(
     family: sa_family_t(AF_UNSPEC),
     interfaceIndex: link.index
@@ -402,7 +408,8 @@ func show_mqprio(
   for try await qdisc in qdiscs {
     guard let mqprio = qdisc as? RTNLMQPrioQDisc else { continue }
     any = true
-    print("egress MQPRIO mapping for \(link.name) (\(mqprio.numTC) traffic classes):")
+    let ifname = names[mqprio.index] ?? "if\(mqprio.index)"
+    print("egress MQPRIO mapping for \(ifname) (\(mqprio.numTC) traffic classes):")
     if let priorityMap = mqprio.priorityMap {
       for pcp in priorityMap.keys.sorted() {
         print("  pcp \(pcp) -> tc \(priorityMap[pcp]!)")
