@@ -12,6 +12,7 @@ PlatformLinkerSettings += [
   .linkedLibrary("nl-3"),
   .linkedLibrary("nl-route-3"),
   .linkedLibrary("nl-nf-3"),
+  .linkedLibrary("nl-genl-3"),
 ]
 
 let package = Package(

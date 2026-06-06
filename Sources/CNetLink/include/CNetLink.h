@@ -8,6 +8,7 @@
 #include <linux/sockios.h>
 #include <linux/if_bridge.h>
 #include <linux/dcbnl.h>
+#include <linux/genetlink.h>
 #include <linux/netfilter/nfnetlink_log.h>
 
 #include <net/if.h>
@@ -17,6 +18,8 @@
 #include <netlink/socket.h>
 #include <netlink/attr.h>
 #include <netlink/msg.h>
+#include <netlink/genl/genl.h>
+#include <netlink/genl/ctrl.h>
 
 #include <netlink/route/addr.h>
 #include <netlink/route/class.h>
