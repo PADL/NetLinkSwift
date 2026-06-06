@@ -134,11 +134,11 @@ func add_mdb(
 ) async throws {
   let bridge = try await findBridge(index: link.master, socket: socket)
   let groupAddress = try RTNLLink.parseMacAddressString(arg)
-  let flags: RTNLLinkBridge.MDBFlags = command == .add_srp_mdb ? [.streamReserved] : []
+  let mdbState: RTNLLinkBridge.MDBState = command == .add_srp_mdb ? .dynamicReservation : .permanent
   try await bridge.add(
     link: link,
     groupAddresses: [groupAddress],
-    flags: flags,
+    state: mdbState,
     socket: socket
   )
 }
@@ -239,8 +239,7 @@ func show_mdb(
     for entry in mdb.entries {
       any = true
       var flags: [String] = []
-      flags.append(entry.isPermanent ? "permanent" : "temporary")
-      if entry.isStreamReserved { flags.append("stream-reserved") }
+      flags.append(String(describing: entry.mdbState))
       print(
         "  port-ifindex \(entry.ifIndex) vid \(entry.vid) proto 0x\(String(entry.proto, radix: 16)) addr \(entry.addressString) flags [\(flags.joined(separator: ", "))]"
       )

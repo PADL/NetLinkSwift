@@ -310,11 +310,6 @@ Sendable, CustomStringConvertible,
     case neighVlanSuppress
     case backupNhid // IFLA_BRPORT_BACKUP_NHID
     case neighForwardGrat // IFLA_BRPORT_NEIGH_FORWARD_GRAT
-    /// `IFLA_BRPORT_FILTER_STREAM_RESERVED` (numeric value 46) — when set,
-    /// the bridge enforces 802.1Qat stream reservation admission control on
-    /// this ingress port. Kernels without `CONFIG_BRIDGE_8021Q_SRP` reject the
-    /// attribute with `EINVAL` (or `EOPNOTSUPP`); callers should tolerate that.
-    case filterStreamReserved
   }
 
   public func set(option: BridgeOption, _ value: some Any, socket: NLSocket) async throws {
@@ -413,54 +408,37 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
     )
   }
 
-  /// Per-entry MDB flags carried in the `MDBE_ATTR_FLAGS` (NLA_U32) input
-  /// attribute. The bridge core treats these as metadata propagated to
-  /// switchdev so hardware can apply its own admission policy.
-  public struct MDBFlags: OptionSet, Sendable {
-    public let rawValue: UInt32
-
-    public init(rawValue: UInt32) {
-      self.rawValue = rawValue
-    }
-
-    /// `MDB_FLAGS_STREAM_RESERVED` — mark the entry as belonging to a
-    /// reserved stream (e.g. IEEE 1722 / 802.1Q SR). Kernels that do not
-    /// recognise the attribute reject the request with `EINVAL`; callers
-    /// using `add(link:groupAddresses:flags:…)` get an automatic retry
-    /// without the flag.
-    public static let streamReserved = MDBFlags(rawValue: 1 << 5)
+  /// The state of an MDB entry (`br_mdb_entry.state`). The raw values mirror
+  /// the kernel `MDB_*` UAPI constants; `dynamicReservation` may be absent
+  /// from older host `<linux/if_bridge.h>`, so the values are defined here.
+  public enum MDBState: UInt8, Sendable {
+    /// `MDB_TEMPORARY` — the entry is aged by a group timer.
+    case temporary = 0
+    /// `MDB_PERMANENT` — the entry persists until explicitly removed.
+    case permanent = 1
+    /// `MDB_DYNAMIC_RESERVATION` — a permanent entry that additionally marks
+    /// the group as an 802.1Qat reserved stream; the kernel propagates this to
+    /// switchdev so hardware can apply its own admission policy.
+    case dynamicReservation = 2
   }
 
   public func add(
     link: RTNLLink,
     groupAddresses: [LinkAddress],
     vlanID: UInt16? = nil,
-    flags: MDBFlags = [],
+    state: MDBState = .permanent,
     updateIfPresent: Bool = true,
     socket: NLSocket
   ) async throws {
     let operation: NLMessage.Operation = updateIfPresent ? .addOrUpdate : .add
-    do {
-      try await socket._groupRequest(
-        bridgeIndex: index,
-        interfaceIndex: link.index,
-        groupAddresses: groupAddresses,
-        vlanID: vlanID,
-        mdbFlags: flags,
-        operation: operation
-      )
-    } catch let error as Errno where error == .invalidArgument && !flags.isEmpty {
-      // Older kernels reject the unknown MDBE_ATTR_FLAGS with EINVAL under
-      // strict netlink validation. Fall back to the no-flag variant.
-      try await socket._groupRequest(
-        bridgeIndex: index,
-        interfaceIndex: link.index,
-        groupAddresses: groupAddresses,
-        vlanID: vlanID,
-        mdbFlags: [],
-        operation: operation
-      )
-    }
+    try await socket._groupRequest(
+      bridgeIndex: index,
+      interfaceIndex: link.index,
+      groupAddresses: groupAddresses,
+      vlanID: vlanID,
+      state: state.rawValue,
+      operation: operation
+    )
   }
 
   public func remove(
@@ -474,7 +452,6 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
       interfaceIndex: link.index,
       groupAddresses: groupAddresses,
       vlanID: vlanID,
-      mdbFlags: [],
       operation: .delete
     )
   }
@@ -783,15 +760,9 @@ public extension NLSocket {
     interfaceIndex: Int,
     groupAddresses: [RTNLLink.LinkAddress],
     vlanID: UInt16? = nil,
-    mdbFlags: RTNLLinkBridge.MDBFlags = [],
+    state: UInt8 = UInt8(MDB_PERMANENT),
     operation: NLMessage.Operation
   ) async throws {
-    // The kernel UAPI for the input-side MDB flags bitmask is a nested
-    // attribute, MDBA_SET_ENTRY_ATTRS → MDBE_ATTR_FLAGS (NLA_U32). Define
-    // them inline so we do not need an MDBE_ATTR_FLAGS in the build host's
-    // <linux/if_bridge.h>; older host headers will not have it.
-    let MDBE_ATTR_FLAGS: CInt = 11
-
     let message = try NLMessage(
       socket: self,
       type: operation != .delete ? RTM_NEWMDB : RTM_DELMDB,
@@ -803,7 +774,7 @@ public extension NLSocket {
     }
     var entry = br_mdb_entry(
       ifindex: UInt32(interfaceIndex),
-      state: UInt8(MDB_PERMANENT),
+      state: state,
       flags: 0,
       vid: vlanID ?? 0,
       addr: .init()
@@ -818,11 +789,6 @@ public extension NLSocket {
     for groupAddress in groupAddresses {
       entry.addr.u.mac_addr = linkAddressToTuple(groupAddress)
       try message.put(opaque: &entry, for: CInt(MDBA_MDB_ENTRY))
-    }
-    if !mdbFlags.isEmpty {
-      let attrs = message.nestStart(attr: CInt(MDBA_SET_ENTRY_ATTRS))
-      try message.put(u32: mdbFlags.rawValue, for: MDBE_ATTR_FLAGS)
-      message.nestEnd(attr: attrs)
     }
     try await ackRequest(message: message)
   }
@@ -1842,11 +1808,19 @@ public struct RTNLMDBEntry: Sendable, CustomStringConvertible {
   public let addressFamily: sa_family_t
   public let address: [UInt8]
 
-  public var isPermanent: Bool { state == UInt8(MDB_PERMANENT) }
+  /// The decoded entry state, or `nil` for an unrecognised raw value.
+  public var mdbState: RTNLLinkBridge.MDBState? {
+    RTNLLinkBridge.MDBState(rawValue: state)
+  }
 
-  /// True if the per-entry `MDB_FLAGS_STREAM_RESERVED` bit is set
-  /// (kernel UAPI `MDB_FLAGS_STREAM_RESERVED = (1 << 5)`).
-  public var isStreamReserved: Bool { (flags & (1 << 5)) != 0 }
+  public var isPermanent: Bool {
+    mdbState == .permanent || mdbState == .dynamicReservation
+  }
+
+  /// True if the entry is an 802.1Qat reserved stream, i.e. its state is
+  /// `MDB_DYNAMIC_RESERVATION`. Such an entry is a permanent entry that
+  /// additionally marks the group reserved.
+  public var isDynamicReservation: Bool { mdbState == .dynamicReservation }
 
   public var macAddress: RTNLLink.LinkAddress? {
     guard address.count == 6 else { return nil }
