@@ -200,8 +200,10 @@ private func NLSocket_CB_VALID(
           return CInt(NL_SKIP.rawValue)
         }
         return CInt(NL_OK.rawValue)
-      case RTM_GETDCB:
-        // dcbnl messages are not libnl objects; parse the raw netlink message ourselves.
+      case RTM_GETDCB, RTM_SETDCB:
+        // dcbnl messages are not libnl objects; parse the raw netlink message ourselves. An
+        // RTM_SETDCB reply carries the command result in its body (RTNLDCB.errorCode) rather
+        // than via the netlink ACK, so it must be parsed too (not treated as unknown).
         do {
           let dcb = try RTNLDCB(rawHeader: nlmsg_hdr(msg)!)
           nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .success(RTNLDCBMessage.get(dcb)))

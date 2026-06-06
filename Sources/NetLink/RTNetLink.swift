@@ -1497,7 +1497,14 @@ extension NLSocket {
     message.nestEnd(attr: table)
     message.nestEnd(attr: ieee)
 
-    try await ackRequest(message: message)
+    // dcbnl reports the SET/DEL result as a DCB_ATTR_IEEE u8 in the RTM_SETDCB reply body; the
+    // netlink ACK is always success. Read the reply and surface the real error (e.g. a driver
+    // that does not implement the op replies EOPNOTSUPP here).
+    let reply = try await continuationRequest(message: message)
+    let errorCode = (reply as? RTNLDCBMessage)?.dcb.errorCode ?? 0
+    if errorCode != 0 {
+      throw Errno(rawValue: errorCode)
+    }
   }
 }
 
@@ -1531,10 +1538,15 @@ public extension RTNLLink {
 public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomStringConvertible {
   public let interfaceName: String?
   public let apps: [RTNLDCBApp]
+  /// Positive errno from a `DCB_CMD_IEEE_SET`/`DEL` reply (0 = success). dcbnl returns the
+  /// command result as a `DCB_ATTR_IEEE` u8 in the reply body rather than via a netlink ACK,
+  /// so callers must inspect this rather than rely on the (always-success) ACK.
+  public let errorCode: CInt
 
-  init(interfaceName: String?, apps: [RTNLDCBApp]) {
+  init(interfaceName: String?, apps: [RTNLDCBApp], errorCode: CInt = 0) {
     self.interfaceName = interfaceName
     self.apps = apps
+    self.errorCode = errorCode
   }
 
   /// Not used — built directly in `NLSocket_CB_VALID` for `RTM_GETDCB`.
@@ -1549,6 +1561,7 @@ public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomSt
     let hdrlen = CInt(MemoryLayout<dcbmsg>.size)
     var interfaceName: String?
     var apps = [RTNLDCBApp]()
+    var errorCode: CInt = 0
 
     var attrRem = nlmsg_attrlen(nlh, hdrlen)
     var attrPos = nlmsg_attrdata(nlh, hdrlen)
@@ -1559,12 +1572,19 @@ public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomSt
       case CInt(DCB_ATTR_IFNAME.rawValue):
         if let s = nla_get_string(attr) { interfaceName = String(cString: s) }
       case CInt(DCB_ATTR_IEEE.rawValue):
-        apps.append(contentsOf: RTNLDCB._parseAppTable(ieee: attr))
+        // In a GET reply DCB_ATTR_IEEE is a nested table; in a SET/DEL reply it is a single
+        // u8 carrying the (negated) command result. Distinguish by payload length.
+        if nla_len(attr) == 1 {
+          let raw = Int(nla_get_u8(attr))
+          errorCode = raw == 0 ? 0 : CInt(256 - raw) // -errno stored as u8 -> positive errno
+        } else {
+          apps.append(contentsOf: RTNLDCB._parseAppTable(ieee: attr))
+        }
       default:
         break
       }
     }
-    self.init(interfaceName: interfaceName, apps: apps)
+    self.init(interfaceName: interfaceName, apps: apps, errorCode: errorCode)
   }
 
   private static func _parseAppTable(ieee: UnsafeMutablePointer<nlattr>) -> [RTNLDCBApp] {
@@ -1598,7 +1618,7 @@ public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomSt
   }
 
   public var description: String {
-    "RTNLDCB(interface: \(interfaceName ?? "?"), apps: \(apps.count))"
+    "RTNLDCB(interface: \(interfaceName ?? "?"), apps: \(apps.count), errorCode: \(errorCode))"
   }
 }
 
