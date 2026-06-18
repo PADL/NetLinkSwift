@@ -23,8 +23,19 @@ enum nlmonitor {
   public static func main() async throws {
     let socket = try NLSocket(protocol: NETLINK_ROUTE)
     try socket.subscribeLinks()
-    for try await link in socket.notifications {
-      debugPrint("found link \(link)")
+    try socket.subscribeBridgeVLANs()
+    for try await notification in socket.notifications {
+      switch notification {
+      case let vlan as RTNLVLANDBMessage:
+        switch vlan {
+        case let .new(v):
+          debugPrint("VLAN new: ifindex \(v.ifIndex) \(v.entries)")
+        case let .del(v):
+          debugPrint("VLAN del: ifindex \(v.ifIndex) \(v.entries)")
+        }
+      default:
+        debugPrint("found \(notification)")
+      }
     }
   }
 }

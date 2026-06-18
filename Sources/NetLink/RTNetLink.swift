@@ -637,6 +637,14 @@ public extension NLSocket {
     try drop(membership: RTNLGRP_LINK)
   }
 
+  func subscribeBridgeVLANs() throws {
+    try add(membership: RTNLGRP_BRVLAN)
+  }
+
+  func unsubscribeBridgeVLANs() throws {
+    try drop(membership: RTNLGRP_BRVLAN)
+  }
+
   func getAddresses(family: sa_family_t) async throws -> AnyAsyncSequence<NLAddress> {
     let message = try NLMessage(socket: self, type: RTM_GETADDR, flags: .dump)
     var hdr = rtgenmsg()
@@ -1404,7 +1412,9 @@ public extension RTNLLink {
 
 /// A DCB application priority table entry (`struct dcb_app`), used to program the
 /// DCBNL IEEE 802.1Qaz APP table. For the PCP selector (`DCB_APP_SEL_PCP`) this maps
-/// an ingress PCP (`protocol`) to an internal priority / queue (`priority`).
+/// an ingress PCP (`protocol`) to an internal frame priority (`priority`). The frame
+/// priority is then mapped to a queue (QPri) by a separate, downstream FPri->QPri step;
+/// `priority` here is never a queue index.
 public struct RTNLDCBApp: Sendable, Equatable {
   public static let pcpSelector = UInt8(DCB_APP_SEL_PCP)
 
@@ -1418,7 +1428,7 @@ public struct RTNLDCBApp: Sendable, Equatable {
     self.protocolID = protocolID
   }
 
-  /// Map an ingress PCP value (0-15, where 8-15 carry DEI) to an internal priority/queue.
+  /// Map an ingress PCP value (0-15, where 8-15 carry DEI) to an internal frame priority.
   public static func pcp(_ pcp: UInt8, priority: UInt8) -> RTNLDCBApp {
     RTNLDCBApp(selector: pcpSelector, priority: priority, protocolID: UInt16(pcp))
   }
@@ -1964,6 +1974,121 @@ public enum RTNLMDBMessage: NLObjectConstructible, Sendable {
     switch self {
     case let .new(m): m
     case let .del(m): m
+    }
+  }
+}
+
+public struct RTNLVLANDBEntry: Sendable, CustomStringConvertible {
+  public let vid: UInt16
+  public let flags: UInt16
+
+  public var isUntagged: Bool { flags & UInt16(BRIDGE_VLAN_INFO_UNTAGGED) != 0 }
+  public var isPVID: Bool { flags & UInt16(BRIDGE_VLAN_INFO_PVID) != 0 }
+
+  public var description: String {
+    "RTNLVLANDBEntry(vid: \(vid)\(isPVID ? " pvid" : "")\(isUntagged ? " untagged" : ""))"
+  }
+}
+
+/// Bridge per-port VLAN database (`RTM_*VLAN`), parsed directly from the raw
+/// netlink message — libnl has no object for the VLAN database.
+public final class RTNLVLANDB: NLObjectConstructible, @unchecked Sendable,
+  CustomStringConvertible, RTNLFactory
+{
+  public let ifIndex: Int
+  public let entries: [RTNLVLANDBEntry]
+
+  init(ifIndex: Int, entries: [RTNLVLANDBEntry]) {
+    self.ifIndex = ifIndex
+    self.entries = entries
+  }
+
+  /// Not used — VLAN messages are parsed directly from the raw nlmsg in
+  /// `NLSocket_CB_VALID`.
+  public required convenience init(object: NLObject) throws {
+    throw NLError.invalidArgument
+  }
+
+  convenience init(rawHeader nlh: UnsafeMutablePointer<nlmsghdr>) throws {
+    let payload = nlmsg_data(nlh)
+    let payloadLen = Int(nlmsg_datalen(nlh))
+    guard let payload, payloadLen >= MemoryLayout<br_vlan_msg>.size else {
+      throw NLError.invalidArgument
+    }
+    let vlanMsg = payload.assumingMemoryBound(to: br_vlan_msg.self).pointee
+    let entries = RTNLVLANDB._parseEntries(
+      nlh: nlh,
+      hdrlen: CInt(MemoryLayout<br_vlan_msg>.size)
+    )
+    self.init(ifIndex: Int(vlanMsg.ifindex), entries: entries)
+  }
+
+  private static func _parseEntries(
+    nlh: UnsafeMutablePointer<nlmsghdr>,
+    hdrlen: CInt
+  ) -> [RTNLVLANDBEntry] {
+    var entries: [RTNLVLANDBEntry] = []
+    var attrRem = nlmsg_attrlen(nlh, hdrlen)
+    var attrPos = nlmsg_attrdata(nlh, hdrlen)
+    while nla_ok(attrPos, attrRem) != 0 {
+      defer { attrPos = nla_next(attrPos, &attrRem) }
+      guard let entryAttr = attrPos,
+            nla_type(entryAttr) == CInt(BRIDGE_VLANDB_ENTRY) else { continue }
+
+      // A BRIDGE_VLANDB_ENTRY carries a bridge_vlan_info (the VID + flags), and
+      // optionally a RANGE attribute giving the last VID of a contiguous range
+      // (the INFO's VID being the first, flagged RANGE_BEGIN).
+      var info: bridge_vlan_info?
+      var rangeEnd: UInt16?
+      var infoRem = nla_len(entryAttr)
+      var infoPos = nla_data(entryAttr)?.assumingMemoryBound(to: nlattr.self)
+      while nla_ok(infoPos, infoRem) != 0 {
+        defer { infoPos = nla_next(infoPos, &infoRem) }
+        guard let infoAttr = infoPos else { continue }
+        switch nla_type(infoAttr) {
+        case CInt(BRIDGE_VLANDB_ENTRY_INFO):
+          guard let data = nla_data(infoAttr),
+                Int(nla_len(infoAttr)) >= MemoryLayout<bridge_vlan_info>.size
+          else { continue }
+          info = data.assumingMemoryBound(to: bridge_vlan_info.self).pointee
+        case CInt(BRIDGE_VLANDB_ENTRY_RANGE):
+          guard let data = nla_data(infoAttr),
+                Int(nla_len(infoAttr)) >= MemoryLayout<UInt16>.size
+          else { continue }
+          rangeEnd = data.assumingMemoryBound(to: UInt16.self).pointee
+        default:
+          break
+        }
+      }
+
+      guard let info else { continue }
+      let last = rangeEnd ?? info.vid
+      guard last >= info.vid else { continue }
+      for vid in info.vid...last {
+        entries.append(RTNLVLANDBEntry(vid: vid, flags: info.flags))
+      }
+    }
+    return entries
+  }
+
+  public var description: String {
+    "RTNLVLANDB(if: \(ifIndex), entries: \(entries.count))"
+  }
+}
+
+public enum RTNLVLANDBMessage: NLObjectConstructible, Sendable {
+  case new(RTNLVLANDB)
+  case del(RTNLVLANDB)
+
+  /// Not used — built directly in `NLSocket_CB_VALID` for `RTM_*VLAN`.
+  public init(object: NLObject) throws {
+    throw NLError.invalidArgument
+  }
+
+  public var vlandb: RTNLVLANDB {
+    switch self {
+    case let .new(v): v
+    case let .del(v): v
     }
   }
 }

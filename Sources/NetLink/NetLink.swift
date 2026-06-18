@@ -200,6 +200,20 @@ private func NLSocket_CB_VALID(
           return CInt(NL_SKIP.rawValue)
         }
         return CInt(NL_OK.rawValue)
+      case RTM_DELVLAN, RTM_GETVLAN, RTM_NEWVLAN:
+        // Bridge per-port VLAN database notifications are not libnl objects;
+        // parse the raw netlink message ourselves (as for MDB).
+        do {
+          let vlandb = try RTNLVLANDB(rawHeader: nlmsg_hdr(msg)!)
+          let vlanMsg: RTNLVLANDBMessage = hdr.nlmsg_type == UInt16(RTM_DELVLAN)
+            ? .del(vlandb)
+            : .new(vlandb)
+          nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .success(vlanMsg))
+        } catch {
+          nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .failure(error))
+          return CInt(NL_SKIP.rawValue)
+        }
+        return CInt(NL_OK.rawValue)
       case RTM_GETDCB, RTM_SETDCB:
         // dcbnl messages are not libnl objects; parse the raw netlink message ourselves. An
         // RTM_SETDCB reply carries the command result in its body (RTNLDCB.errorCode) rather
