@@ -530,7 +530,8 @@ Sendable {
     _requests.withLock { requests in
       let _stream = Stream { continuation in
         requests[sequence] = .stream(continuation)
-        continuation.onTermination = { @Sendable _ in
+        continuation.onTermination = { @Sendable [weak self] _ in
+          self?._requests.withLock { $0[sequence] = nil }
         }
       }
       stream = _stream
