@@ -25,6 +25,7 @@ enum Command: CaseIterable {
   case add_vlan
   case del_vlan
   case show_vlan
+  case show_pvid
   case add_fdb
   case del_fdb
   case show_fdb
@@ -43,7 +44,7 @@ enum Command: CaseIterable {
 
   var needsArg: Bool {
     switch self {
-    case .show_vlan, .show_fdb, .show_mdb, .show_pcp_prio, .show_mqprio: false
+    case .show_vlan, .show_pvid, .show_fdb, .show_mdb, .show_pcp_prio, .show_mqprio: false
     default: true
     }
   }
@@ -53,7 +54,7 @@ typealias CommandHandler = (Command, NLSocket, RTNLLink, String) async throws ->
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|show_vlan|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio] [ifname] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|show_vlan|show_pvid|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio] [ifname] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
   )
   exit(1)
 }
@@ -191,6 +192,43 @@ func show_vlan(
     if flags.isEmpty { flags.append("tagged") }
     print("  vid \(vid) [\(flags.joined(separator: ", "))]")
   }
+}
+
+func show_pvid(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  // Dump with AF_BRIDGE so the per-link bridge VLAN info (rtnl_link_bridge_vlan:
+  // pvid + vlan/untagged bitmaps) is populated; AF_UNSPEC dumps omit it, which is
+  // why a master/port object obtained that way reports pvid "none".
+  let bridgeIndex = (link.master == 0 || link.master == link.index) ? link.index : link.master
+  var any = false
+  for try await l in try await socket.getLinks(family: sa_family_t(AF_BRIDGE)) {
+    let isSelf = l.index == bridgeIndex
+    let isMember = l.master == bridgeIndex && l.index != bridgeIndex
+    guard isSelf || isMember, let b = l as? RTNLLinkBridge else { continue }
+    any = true
+    let pvid = b.bridgePVID
+    let allVids = b.bridgeTaggedVLANs ?? []
+    let untagged = b.bridgeUntaggedVLANs ?? []
+    let role = isSelf ? "bridge-self" : "port       "
+    print(
+      "\(role) \(l.name) (ifindex \(l.index)) master \(l.master) bridgePVID(libnl)=\(pvid.map(String.init) ?? "none")"
+    )
+    if allVids.isEmpty {
+      print("  (no VLAN bitmap)")
+      continue
+    }
+    for vid in allVids.sorted() {
+      var flags: [String] = []
+      if untagged.contains(vid) { flags.append("untagged") } else { flags.append("tagged") }
+      if pvid == vid { flags.append("PVID") }
+      print("  vid \(vid) [\(flags.joined(separator: ", "))]")
+    }
+  }
+  if !any { print("  (no bridge VLAN info for \(link.name))") }
 }
 
 func show_fdb(
@@ -451,6 +489,7 @@ enum nltool {
         .add_vlan: add_vlan,
         .del_vlan: del_vlan,
         .show_vlan: show_vlan,
+        .show_pvid: show_pvid,
         .add_fdb: add_fdb,
         .del_fdb: del_fdb,
         .show_fdb: show_fdb,
