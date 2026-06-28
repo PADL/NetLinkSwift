@@ -556,6 +556,24 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
   }
 }
 
+// linux/if_vlan.h vlan_flags. Defined here rather than imported from
+// <linux/if_vlan.h> because the CNetLink umbrella header does not include it.
+public struct VLANFlags: OptionSet, Sendable {
+  public typealias RawValue = UInt32
+
+  public let rawValue: RawValue
+
+  public init(rawValue: RawValue) {
+    self.rawValue = rawValue
+  }
+
+  public static let reorderHeader = VLANFlags(rawValue: 0x1)
+  public static let gvrp = VLANFlags(rawValue: 0x2)
+  public static let looseBinding = VLANFlags(rawValue: 0x4)
+  public static let mvrp = VLANFlags(rawValue: 0x8)
+  public static let bridgeBinding = VLANFlags(rawValue: 0x10)
+}
+
 public final class RTNLLinkVLAN: RTNLLink, @unchecked Sendable {
   public var vlanID: UInt16? {
     let vid = rtnl_link_vlan_get_id(_obj)
@@ -569,8 +587,8 @@ public final class RTNLLinkVLAN: RTNLLink, @unchecked Sendable {
     return UInt16(proto)
   }
 
-  public var vlanFlags: UInt32 {
-    UInt32(rtnl_link_vlan_get_flags(_obj))
+  public var vlanFlags: VLANFlags {
+    VLANFlags(rawValue: UInt32(rtnl_link_vlan_get_flags(_obj)))
   }
 }
 

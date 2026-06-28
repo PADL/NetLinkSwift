@@ -31,7 +31,7 @@ enum nldump {
           " bridge port state \(bridge.bridgePortState) flags \(bridge.bridgeFlags) pvid \(String(describing: bridge.bridgePVID)) hasVLAN \(bridge.bridgeHasVLAN) tagged \(String(describing: bridge.bridgeTaggedVLANs)) untagged \(String(describing: bridge.bridgeUntaggedVLANs))"
         )
       } else if let vlan = link as? RTNLLinkVLAN {
-        debugPrint(" vlan ID \(vlan.vlanID ?? 0) flags \(vlan.vlanFlags)")
+        debugPrint(" vlan ID \(vlan.vlanID ?? 0) flags \(vlan.vlanFlags.rawValue)")
       }
       if let qdiscs = try? await socket.getQDiscs(
         family: sa_family_t(AF_UNSPEC),
