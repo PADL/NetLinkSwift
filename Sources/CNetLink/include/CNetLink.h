@@ -3,6 +3,8 @@
 #include <netinet/in.h>
 
 #include <linux/ethtool.h>
+#include <linux/ethtool_netlink.h>
+#include <linux/genetlink.h>
 #include <linux/in6.h>
 #include <linux/filter.h>
 #include <linux/sockios.h>
@@ -39,6 +41,10 @@
 #include <netlink/netfilter/nfnl.h>
 #include <netlink/netfilter/log.h>
 #include <netlink/netfilter/log_msg.h>
+
+#include <netlink/genl/genl.h>
+#include <netlink/genl/ctrl.h>
+#include <netlink/genl/mngt.h>
 
 int rtnl_tc_msg_build(struct rtnl_tc *tc, int type, int flags,
                       struct nl_msg **result);

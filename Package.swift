@@ -12,6 +12,7 @@ PlatformLinkerSettings += [
   .linkedLibrary("nl-3"),
   .linkedLibrary("nl-route-3"),
   .linkedLibrary("nl-nf-3"),
+  .linkedLibrary("nl-genl-3"),
 ]
 
 let package = Package(
@@ -49,9 +50,9 @@ let package = Package(
   targets: [
     .systemLibrary(
       name: "CNetLink",
-      pkgConfig: "libnl-3 libnl-route-3 libnl-nf-3",
+      pkgConfig: "libnl-3 libnl-route-3 libnl-nf-3 libnl-genl-3",
       providers: [
-        .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3-dev"]),
+        .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3-dev", "libnl-genl-3-dev"]),
       ]
     ),
     .target(

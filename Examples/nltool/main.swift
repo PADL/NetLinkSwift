@@ -41,11 +41,23 @@ enum Command: CaseIterable {
   case del_pcp_prio
   case show_pcp_prio
   case show_mqprio
+  case genl_family
+  case ethtool_pause
 
   var needsArg: Bool {
     switch self {
     case .show_vlan, .show_pvid, .show_fdb, .show_mdb, .show_pcp_prio, .show_mqprio: false
+    case .genl_family, .ethtool_pause: false
     default: true
+    }
+  }
+
+  /// generic netlink commands operate on their own NETLINK_GENERIC socket and
+  /// take a bare family/interface name rather than an rtnetlink link.
+  var isGenericNetlink: Bool {
+    switch self {
+    case .genl_family, .ethtool_pause: true
+    default: false
     }
   }
 }
@@ -54,7 +66,7 @@ typealias CommandHandler = (Command, NLSocket, RTNLLink, String) async throws ->
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|show_vlan|show_pvid|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio] [ifname] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|show_vlan|show_pvid|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio|genl_family|ethtool_pause] [ifname|genl-family] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
   )
   exit(1)
 }
@@ -461,6 +473,31 @@ func show_mqprio(
   if !any { print("  (no MQPRIO qdisc on \(link.name))") }
 }
 
+func genl_family(name: String) async throws {
+  let socket = try GENLSocket()
+  let family = try await socket.resolveFamily(name: name)
+  print(
+    "genl family \(family.name) id \(family.id) version \(family.version.map(String.init) ?? "?")"
+  )
+  if family.multicastGroups.isEmpty {
+    print("  (no multicast groups)")
+  } else {
+    for group in family.multicastGroups.sorted(by: { $0.id < $1.id }) {
+      print("  mcast-group \(group.name) id \(group.id)")
+    }
+  }
+}
+
+func ethtool_pause(interfaceName: String) async throws {
+  let socket = try GENLSocket()
+  let pause = try await socket.ethtoolPauseParameters(interfaceName: interfaceName)
+  func fmt(_ value: Bool?) -> String { value.map { $0 ? "on" : "off" } ?? "n/a" }
+  print("ethtool pause parameters for \(interfaceName):")
+  print("  autoneg \(fmt(pause.autoneg))")
+  print("  rx \(fmt(pause.rx))")
+  print("  tx \(fmt(pause.tx))")
+}
+
 @MainActor
 private var gSocket: NLSocket!
 
@@ -479,6 +516,23 @@ enum nltool {
 
     if command.needsArg, CommandLine.arguments.count < 4 {
       usage()
+    }
+
+    if command.isGenericNetlink {
+      do {
+        switch command {
+        case .genl_family:
+          try await genl_family(name: CommandLine.arguments[2])
+        case .ethtool_pause:
+          try await ethtool_pause(interfaceName: CommandLine.arguments[2])
+        default:
+          usage()
+        }
+      } catch {
+        print("failed to \(command): \(error)")
+        exit(3)
+      }
+      return
     }
 
     do {
