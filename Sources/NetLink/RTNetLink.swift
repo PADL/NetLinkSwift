@@ -1543,6 +1543,12 @@ public extension RTNLLink {
   func getDCBApps(socket: NLSocket) async throws -> [RTNLDCBApp] {
     try await socket._dcbGetApps(interfaceName: name)
   }
+
+  /// Fetch the priorities with PFC enabled (`ieee_pfc.pfc_en`, `DCB_CMD_IEEE_GET`) as a bitmap
+  /// indexed by priority.
+  func getDCBPFCEnabled(socket: NLSocket) async throws -> UInt8 {
+    try await socket._dcbGet(interfaceName: name).pfcEnabled
+  }
 }
 
 /// The DCB IEEE APP table returned by a `DCB_CMD_IEEE_GET` query. dcbnl messages are not
@@ -1550,14 +1556,18 @@ public extension RTNLLink {
 public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomStringConvertible {
   public let interfaceName: String?
   public let apps: [RTNLDCBApp]
+  /// `ieee_pfc.pfc_en` from a `DCB_CMD_IEEE_GET` reply: a bitmap indexed by priority (bit p set =
+  /// priority-based flow control enabled for priority p). 0 if the interface reports no PFC.
+  public let pfcEnabled: UInt8
   /// Positive errno from a `DCB_CMD_IEEE_SET`/`DEL` reply (0 = success). dcbnl returns the
   /// command result as a `DCB_ATTR_IEEE` u8 in the reply body rather than via a netlink ACK,
   /// so callers must inspect this rather than rely on the (always-success) ACK.
   public let errorCode: CInt
 
-  init(interfaceName: String?, apps: [RTNLDCBApp], errorCode: CInt = 0) {
+  init(interfaceName: String?, apps: [RTNLDCBApp], pfcEnabled: UInt8 = 0, errorCode: CInt = 0) {
     self.interfaceName = interfaceName
     self.apps = apps
+    self.pfcEnabled = pfcEnabled
     self.errorCode = errorCode
   }
 
@@ -1573,6 +1583,7 @@ public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomSt
     let hdrlen = CInt(MemoryLayout<dcbmsg>.size)
     var interfaceName: String?
     var apps = [RTNLDCBApp]()
+    var pfcEnabled: UInt8 = 0
     var errorCode: CInt = 0
 
     var attrRem = nlmsg_attrlen(nlh, hdrlen)
@@ -1591,12 +1602,28 @@ public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomSt
           errorCode = raw == 0 ? 0 : CInt(256 - raw) // -errno stored as u8 -> positive errno
         } else {
           apps.append(contentsOf: RTNLDCB._parseAppTable(ieee: attr))
+          pfcEnabled = RTNLDCB._parsePFCEnabled(ieee: attr)
         }
       default:
         break
       }
     }
-    self.init(interfaceName: interfaceName, apps: apps, errorCode: errorCode)
+    self.init(interfaceName: interfaceName, apps: apps, pfcEnabled: pfcEnabled, errorCode: errorCode)
+  }
+
+  /// Extract `ieee_pfc.pfc_en` from the nested `DCB_ATTR_IEEE` table (0 if absent).
+  private static func _parsePFCEnabled(ieee: UnsafeMutablePointer<nlattr>) -> UInt8 {
+    var rem = nla_len(ieee)
+    var pos = nla_data(ieee)?.assumingMemoryBound(to: nlattr.self)
+    while nla_ok(pos, rem) != 0 {
+      defer { pos = nla_next(pos, &rem) }
+      guard let attr = pos,
+            nla_type(attr) == CInt(DCB_ATTR_IEEE_PFC.rawValue),
+            let data = nla_data(attr),
+            Int(nla_len(attr)) >= MemoryLayout<ieee_pfc>.size else { continue }
+      return data.assumingMemoryBound(to: ieee_pfc.self).pointee.pfc_en
+    }
+    return 0
   }
 
   private static func _parseAppTable(ieee: UnsafeMutablePointer<nlattr>) -> [RTNLDCBApp] {
@@ -1651,6 +1678,11 @@ public enum RTNLDCBMessage: NLObjectConstructible, Sendable {
 
 private extension NLSocket {
   func _dcbGetApps(interfaceName: String) async throws -> [RTNLDCBApp] {
+    try await _dcbGet(interfaceName: interfaceName).apps
+  }
+
+  /// Issue a `DCB_CMD_IEEE_GET` and return the parsed IEEE DCB state (APP table + PFC).
+  func _dcbGet(interfaceName: String) async throws -> RTNLDCB {
     let message = try NLMessage(
       socket: self,
       type: Int(RTM_GETDCB),
@@ -1664,7 +1696,7 @@ private extension NLSocket {
     try message.put(string: interfaceName, for: CInt(DCB_ATTR_IFNAME.rawValue))
 
     let result = try await continuationRequest(message: message)
-    return (result as! RTNLDCBMessage).dcb.apps
+    return (result as! RTNLDCBMessage).dcb
   }
 }
 
