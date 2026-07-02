@@ -20,7 +20,7 @@ import NetLink
 
 @main
 enum nldump {
-  public static func main() async throws {
+  static func main() async throws {
     let socket = try NLSocket(protocol: NETLINK_ROUTE)
     for try await link in try await socket.getLinks(family: sa_family_t(AF_UNSPEC)) {
       debugPrint(
@@ -43,7 +43,9 @@ enum nldump {
       }
     }
     for try await addr in try await socket.getAddresses(family: sa_family_t(AF_INET)) {
-      debugPrint("@\(addr.index) found address \(addr) \(try! addr.localAddress.presentationAddress)")
+      debugPrint(
+        "@\(addr.index) found address \(addr) \(try! addr.localAddress.presentationAddress)"
+      )
     }
   }
 }

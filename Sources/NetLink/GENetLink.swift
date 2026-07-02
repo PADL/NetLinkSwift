@@ -168,7 +168,9 @@ public struct EthtoolPauseParameters: Sendable, CustomStringConvertible {
   public let tx: Bool?
 
   public var description: String {
-    func fmt(_ b: Bool?) -> String { b.map { $0 ? "on" : "off" } ?? "n/a" }
+    func fmt(_ b: Bool?) -> String {
+      b.map { $0 ? "on" : "off" } ?? "n/a"
+    }
     return "EthtoolPauseParameters(autoneg: \(fmt(autoneg)), rx: \(fmt(rx)), tx: \(fmt(tx)))"
   }
 }

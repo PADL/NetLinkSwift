@@ -220,7 +220,10 @@ private func NLSocket_CB_VALID(
         // than via the netlink ACK, so it must be parsed too (not treated as unknown).
         do {
           let dcb = try RTNLDCB(rawHeader: nlmsg_hdr(msg)!)
-          nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .success(RTNLDCBMessage.get(dcb)))
+          nlSocket.yield(
+            sequence: hdr.nlmsg_seq,
+            withConstructible: .success(RTNLDCBMessage.get(dcb))
+          )
         } catch {
           nlSocket.yield(sequence: hdr.nlmsg_seq, withConstructible: .failure(error))
           return CInt(NL_SKIP.rawValue)
@@ -796,7 +799,9 @@ struct NLMessage: ~Copyable {
     guard _msg != nil else { throw NLError.noMemory }
   }
 
-  init(consuming msg: OpaquePointer) { _msg = msg }
+  init(consuming msg: OpaquePointer) {
+    _msg = msg
+  }
 
   init(
     socket: NLSocket,
@@ -841,7 +846,12 @@ struct NLMessage: ~Copyable {
   func append(opaque value: UnsafePointer<some Any>) throws {
     try withUnsafeBytes(of: value.pointee) { bytes in
       try throwingNLError {
-        nlmsg_append(_msg, UnsafeMutableRawPointer(mutating: bytes.baseAddress), bytes.count, CInt(NLMSG_ALIGNTO))
+        nlmsg_append(
+          _msg,
+          UnsafeMutableRawPointer(mutating: bytes.baseAddress),
+          bytes.count,
+          CInt(NLMSG_ALIGNTO)
+        )
       }
     }
   }

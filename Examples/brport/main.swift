@@ -43,7 +43,7 @@ private var gSocket: NLSocket!
 
 @main
 enum brport {
-  public static func main() async throws {
+  static func main() async throws {
     if CommandLine.arguments.count < 4 {
       usage()
     }

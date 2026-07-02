@@ -48,7 +48,8 @@ enum Command: CaseIterable {
 
   var needsArg: Bool {
     switch self {
-    case .show_vlan, .show_vlandb, .show_pvid, .show_fdb, .show_mdb, .show_pcp_prio, .show_mqprio: false
+    case .show_vlan, .show_vlandb, .show_pvid, .show_fdb, .show_mdb, .show_pcp_prio,
+         .show_mqprio: false
     case .genl_family, .ethtool_pause: false
     default: true
     }
@@ -523,7 +524,9 @@ func genl_family(name: String) async throws {
 func ethtool_pause(interfaceName: String) async throws {
   let socket = try GENLSocket()
   let pause = try await socket.ethtoolPauseParameters(interfaceName: interfaceName)
-  func fmt(_ value: Bool?) -> String { value.map { $0 ? "on" : "off" } ?? "n/a" }
+  func fmt(_ value: Bool?) -> String {
+    value.map { $0 ? "on" : "off" } ?? "n/a"
+  }
   print("ethtool pause parameters for \(interfaceName):")
   print("  autoneg \(fmt(pause.autoneg))")
   print("  rx \(fmt(pause.rx))")
@@ -535,7 +538,7 @@ private var gSocket: NLSocket!
 
 @main
 enum nltool {
-  public static func main() async throws {
+  static func main() async throws {
     if CommandLine.arguments.count < 3 {
       usage()
     }

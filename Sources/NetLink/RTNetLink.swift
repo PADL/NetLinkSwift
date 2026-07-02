@@ -178,12 +178,12 @@ Sendable, CustomStringConvertible,
     rtnl_link_get_carrier(_obj)
   }
 
-  // IF_OPER_XXX
+  /// IF_OPER_XXX
   public var operationalState: UInt8 {
     rtnl_link_get_operstate(_obj)
   }
 
-  // LINK_MODE_XXX
+  /// LINK_MODE_XXX
   public var linkMode: UInt8 {
     rtnl_link_get_linkmode(_obj)
   }
@@ -560,8 +560,8 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
   }
 }
 
-// linux/if_vlan.h vlan_flags. Defined here rather than imported from
-// <linux/if_vlan.h> because the CNetLink umbrella header does not include it.
+/// linux/if_vlan.h vlan_flags. Defined here rather than imported from
+/// <linux/if_vlan.h> because the CNetLink umbrella header does not include it.
 public struct VLANFlags: OptionSet, Sendable {
   public typealias RawValue = UInt32
 
@@ -667,8 +667,8 @@ public extension NLSocket {
     try drop(membership: RTNLGRP_BRVLAN)
   }
 
-  // Dump the bridge per-port VLAN database (RTM_GETVLAN): unlike the libnl
-  // AF_BRIDGE bitmaps, entries carry the full per-VID flags.
+  /// Dump the bridge per-port VLAN database (RTM_GETVLAN): unlike the libnl
+  /// AF_BRIDGE bitmaps, entries carry the full per-VID flags.
   func getBridgeVLANs() async throws -> AnyAsyncSequence<RTNLVLANDB> {
     let message = try NLMessage(socket: self, type: RTM_GETVLAN, flags: .dump)
     var hdr = br_vlan_msg()
@@ -757,7 +757,7 @@ public extension NLSocket {
     try await ackRequest(message: message)
   }
 
-  // NLM_F_BULK is not supported for RTM_DELLINK
+  /// NLM_F_BULK is not supported for RTM_DELLINK
   private func _vlanRequestSingle(
     vlan vid: UInt16,
     interfaceIndex: Int,
@@ -1123,7 +1123,7 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
     }
   }
 
-  // maps priorities to TCs
+  /// maps priorities to TCs
   public var priorityMap: [UInt8: UInt8]? {
     guard let map = rtnl_qdisc_mqprio_get_priomap(_obj) else { return nil }
     var priorityMap = [UInt8: UInt8]()
@@ -1133,7 +1133,7 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc, @unchecked Sendable {
     return priorityMap
   }
 
-  // per-TC queue allocation: count[tc] queues starting at offset[tc]
+  /// per-TC queue allocation: count[tc] queues starting at offset[tc]
   public var queues: (count: [UInt16], offset: [UInt16]) {
     get throws {
       var count = [UInt16](repeating: 0, count: Int(TC_QOPT_MAX_QUEUE))
@@ -1473,13 +1473,13 @@ public struct RTNLDCBApp: Sendable, Equatable {
     var app = dcb_app()
     app.selector = selector
     app.priority = priority
-    app.`protocol` = protocolID
+    app.protocol = protocolID
     return app
   }
 }
 
-extension NLSocket {
-  fileprivate func _dcbAppRequest(
+private extension NLSocket {
+  func _dcbAppRequest(
     interfaceName: String,
     apps: [RTNLDCBApp],
     cmd: UInt8
@@ -1622,7 +1622,7 @@ public final class RTNLDCB: NLObjectConstructible, @unchecked Sendable, CustomSt
         apps.append(RTNLDCBApp(
           selector: a.selector,
           priority: a.priority,
-          protocolID: a.`protocol`
+          protocolID: a.protocol
         ))
       }
     }
@@ -1649,8 +1649,8 @@ public enum RTNLDCBMessage: NLObjectConstructible, Sendable {
   }
 }
 
-extension NLSocket {
-  fileprivate func _dcbGetApps(interfaceName: String) async throws -> [RTNLDCBApp] {
+private extension NLSocket {
+  func _dcbGetApps(interfaceName: String) async throws -> [RTNLDCBApp] {
     let message = try NLMessage(
       socket: self,
       type: Int(RTM_GETDCB),
@@ -1720,7 +1720,7 @@ private func _hex(_ byte: UInt8) -> String {
 }
 
 private func _hex(_ value: UInt16) -> String {
-  _hex(UInt8(value >> 8)) + _hex(UInt8(value & 0xff))
+  _hex(UInt8(value >> 8)) + _hex(UInt8(value & 0xFF))
 }
 
 private func _nlAddrToBytes(_ addr: OpaquePointer?) -> (sa_family_t, [UInt8])? {
@@ -1742,7 +1742,9 @@ private func _nlAddrToMac(_ addr: OpaquePointer?) -> RTNLLink.LinkAddress? {
     start: nl_addr_get_binary_addr(addr).assumingMemoryBound(to: UInt8.self),
     count: 6
   )
-  for i in 0..<6 { result[i] = bytes[i] }
+  for i in 0..<6 {
+    result[i] = bytes[i]
+  }
   return result
 }
 
@@ -1763,7 +1765,9 @@ public final class RTNLNeighbor: NLObjectConstructible, @unchecked Sendable,
     self.init(object)
   }
 
-  fileprivate var _obj: OpaquePointer { _object._obj }
+  fileprivate var _obj: OpaquePointer {
+    _object._obj
+  }
 
   public var family: sa_family_t {
     sa_family_t(rtnl_neigh_get_family(_obj))
@@ -1866,12 +1870,16 @@ public struct RTNLMDBEntry: Sendable, CustomStringConvertible {
   /// True if the entry is an 802.1Qat reserved stream, i.e. its state is
   /// `MDB_DYNAMIC_RESERVATION`. Such an entry is a permanent entry that
   /// additionally marks the group reserved.
-  public var isDynamicReservation: Bool { mdbState == .dynamicReservation }
+  public var isDynamicReservation: Bool {
+    mdbState == .dynamicReservation
+  }
 
   public var macAddress: RTNLLink.LinkAddress? {
     guard address.count == 6 else { return nil }
     var result = RTNLLink.LinkAddress(repeating: 0)
-    for i in 0..<6 { result[i] = address[i] }
+    for i in 0..<6 {
+      result[i] = address[i]
+    }
     return result
   }
 
@@ -2014,8 +2022,8 @@ public enum RTNLMDBMessage: NLObjectConstructible, Sendable {
   }
 }
 
-// bridge_vlan_info flags (BRIDGE_VLAN_INFO_*). Defined as an OptionSet rather than
-// using the C constants; .dynamic may not yet be present in <linux/if_bridge.h>.
+/// bridge_vlan_info flags (BRIDGE_VLAN_INFO_*). Defined as an OptionSet rather than
+/// using the C constants; .dynamic may not yet be present in <linux/if_bridge.h>.
 public struct BridgeVLANFlags: OptionSet, Sendable {
   public let rawValue: UInt16
 
@@ -2030,8 +2038,8 @@ public struct BridgeVLANFlags: OptionSet, Sendable {
   public static let rangeEnd = BridgeVLANFlags(rawValue: 1 << 4)
   public static let brEntry = BridgeVLANFlags(rawValue: 1 << 5)
   public static let onlyOpts = BridgeVLANFlags(rawValue: 1 << 6)
-  // 802.1Q Dynamic VLAN Registration Entry (e.g. created by an MVRP daemon);
-  // older kernels silently ignore this flag
+  /// 802.1Q Dynamic VLAN Registration Entry (e.g. created by an MVRP daemon);
+  /// older kernels silently ignore this flag
   public static let dynamic = BridgeVLANFlags(rawValue: 1 << 7)
 }
 
@@ -2039,11 +2047,21 @@ public struct RTNLVLANDBEntry: Sendable, CustomStringConvertible {
   public let vid: UInt16
   public let flags: UInt16
 
-  var _flags: BridgeVLANFlags { BridgeVLANFlags(rawValue: flags) }
+  var _flags: BridgeVLANFlags {
+    BridgeVLANFlags(rawValue: flags)
+  }
 
-  public var isUntagged: Bool { _flags.contains(.untagged) }
-  public var isPVID: Bool { _flags.contains(.pvid) }
-  public var isDynamic: Bool { _flags.contains(.dynamic) }
+  public var isUntagged: Bool {
+    _flags.contains(.untagged)
+  }
+
+  public var isPVID: Bool {
+    _flags.contains(.pvid)
+  }
+
+  public var isDynamic: Bool {
+    _flags.contains(.dynamic)
+  }
 
   public var description: String {
     "RTNLVLANDBEntry(vid: \(vid)\(isPVID ? " pvid" : "")\(isUntagged ? " untagged" : "")\(isDynamic ? " dynamic" : ""))"
