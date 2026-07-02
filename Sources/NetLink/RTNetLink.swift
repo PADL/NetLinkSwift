@@ -334,7 +334,7 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
 
   public func add(
     vlans: Set<UInt16>,
-    flags: UInt16 = 0,
+    flags: BridgeVLANFlags = [],
     updateIfPresent: Bool = true,
     socket: NLSocket
   ) async throws {
@@ -347,7 +347,11 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
     )
   }
 
-  public func remove(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
+  public func remove(
+    vlans: Set<UInt16>,
+    flags: BridgeVLANFlags = [],
+    socket: NLSocket
+  ) async throws {
     try await socket._vlanRequest(
       vlans: vlans,
       interfaceIndex: index,
@@ -663,6 +667,20 @@ public extension NLSocket {
     try drop(membership: RTNLGRP_BRVLAN)
   }
 
+  // Dump the bridge per-port VLAN database (RTM_GETVLAN): unlike the libnl
+  // AF_BRIDGE bitmaps, entries carry the full per-VID flags.
+  func getBridgeVLANs() async throws -> AnyAsyncSequence<RTNLVLANDB> {
+    let message = try NLMessage(socket: self, type: RTM_GETVLAN, flags: .dump)
+    var hdr = br_vlan_msg()
+    hdr.family = UInt8(AF_BRIDGE)
+    try withUnsafeBytes(of: &hdr) {
+      try message.append(Array($0))
+    }
+    return try streamRequest(message: message)
+      .map { ($0 as! RTNLVLANDBMessage).vlandb }
+      .eraseToAnyAsyncSequence()
+  }
+
   func getAddresses(family: sa_family_t) async throws -> AnyAsyncSequence<NLAddress> {
     let message = try NLMessage(socket: self, type: RTM_GETADDR, flags: .dump)
     var hdr = rtgenmsg()
@@ -743,7 +761,7 @@ public extension NLSocket {
   private func _vlanRequestSingle(
     vlan vid: UInt16,
     interfaceIndex: Int,
-    flags: UInt16 = 0,
+    flags: BridgeVLANFlags = [],
     moreFlags: UInt16 = 0,
     operation: NLMessage.Operation
   ) async throws {
@@ -757,7 +775,7 @@ public extension NLSocket {
     if moreFlags != 0 {
       try message.put(u16: moreFlags, for: CInt(IFLA_BRIDGE_FLAGS))
     }
-    var vlanInfo = bridge_vlan_info(flags: flags, vid: vid)
+    var vlanInfo = bridge_vlan_info(flags: flags.rawValue, vid: vid)
     try message.put(opaque: &vlanInfo, for: CInt(IFLA_BRIDGE_VLAN_INFO))
     message.nestEnd(attr: attr)
     try await ackRequest(message: message)
@@ -766,7 +784,7 @@ public extension NLSocket {
   fileprivate func _vlanRequest(
     vlans: Set<UInt16>,
     interfaceIndex: Int,
-    flags: UInt16 = 0,
+    flags: BridgeVLANFlags = [],
     moreFlags: UInt16 = 0,
     operation: NLMessage.Operation
   ) async throws {
@@ -1996,15 +2014,39 @@ public enum RTNLMDBMessage: NLObjectConstructible, Sendable {
   }
 }
 
+// bridge_vlan_info flags (BRIDGE_VLAN_INFO_*). Defined as an OptionSet rather than
+// using the C constants; .dynamic may not yet be present in <linux/if_bridge.h>.
+public struct BridgeVLANFlags: OptionSet, Sendable {
+  public let rawValue: UInt16
+
+  public init(rawValue: UInt16) {
+    self.rawValue = rawValue
+  }
+
+  public static let master = BridgeVLANFlags(rawValue: 1 << 0)
+  public static let pvid = BridgeVLANFlags(rawValue: 1 << 1)
+  public static let untagged = BridgeVLANFlags(rawValue: 1 << 2)
+  public static let rangeBegin = BridgeVLANFlags(rawValue: 1 << 3)
+  public static let rangeEnd = BridgeVLANFlags(rawValue: 1 << 4)
+  public static let brEntry = BridgeVLANFlags(rawValue: 1 << 5)
+  public static let onlyOpts = BridgeVLANFlags(rawValue: 1 << 6)
+  // 802.1Q Dynamic VLAN Registration Entry (e.g. created by an MVRP daemon);
+  // older kernels silently ignore this flag
+  public static let dynamic = BridgeVLANFlags(rawValue: 1 << 7)
+}
+
 public struct RTNLVLANDBEntry: Sendable, CustomStringConvertible {
   public let vid: UInt16
   public let flags: UInt16
 
-  public var isUntagged: Bool { flags & UInt16(BRIDGE_VLAN_INFO_UNTAGGED) != 0 }
-  public var isPVID: Bool { flags & UInt16(BRIDGE_VLAN_INFO_PVID) != 0 }
+  var _flags: BridgeVLANFlags { BridgeVLANFlags(rawValue: flags) }
+
+  public var isUntagged: Bool { _flags.contains(.untagged) }
+  public var isPVID: Bool { _flags.contains(.pvid) }
+  public var isDynamic: Bool { _flags.contains(.dynamic) }
 
   public var description: String {
-    "RTNLVLANDBEntry(vid: \(vid)\(isPVID ? " pvid" : "")\(isUntagged ? " untagged" : ""))"
+    "RTNLVLANDBEntry(vid: \(vid)\(isPVID ? " pvid" : "")\(isUntagged ? " untagged" : "")\(isDynamic ? " dynamic" : ""))"
   }
 }
 

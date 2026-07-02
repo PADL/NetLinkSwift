@@ -23,8 +23,10 @@ import SystemPackage
 
 enum Command: CaseIterable {
   case add_vlan
+  case add_dynamic_vlan
   case del_vlan
   case show_vlan
+  case show_vlandb
   case show_pvid
   case add_fdb
   case del_fdb
@@ -46,7 +48,7 @@ enum Command: CaseIterable {
 
   var needsArg: Bool {
     switch self {
-    case .show_vlan, .show_pvid, .show_fdb, .show_mdb, .show_pcp_prio, .show_mqprio: false
+    case .show_vlan, .show_vlandb, .show_pvid, .show_fdb, .show_mdb, .show_pcp_prio, .show_mqprio: false
     case .genl_family, .ethtool_pause: false
     default: true
     }
@@ -66,7 +68,7 @@ typealias CommandHandler = (Command, NLSocket, RTNLLink, String) async throws ->
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|show_vlan|show_pvid|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio|genl_family|ethtool_pause] [ifname|genl-family] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|add_dynamic_vlan|del_vlan|show_vlan|show_vlandb|show_pvid|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio|genl_family|ethtool_pause] [ifname|genl-family] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
   )
   exit(1)
 }
@@ -109,7 +111,11 @@ func findBridge(index: Int, socket: NLSocket) async throws -> RTNLLinkBridge {
 
 func add_vlan(command: Command, socket: NLSocket, link: RTNLLink, arg: String) async throws {
   guard let link = link as? RTNLLinkBridge, let vlan = UInt16(arg) else { usage() }
-  try await link.add(vlans: Set([vlan]), socket: socket)
+  try await link.add(
+    vlans: Set([vlan]),
+    flags: command == .add_dynamic_vlan ? .dynamic : [],
+    socket: socket
+  )
 }
 
 func del_vlan(command: Command, socket: NLSocket, link: RTNLLink, arg: String) async throws {
@@ -204,6 +210,32 @@ func show_vlan(
     if flags.isEmpty { flags.append("tagged") }
     print("  vid \(vid) [\(flags.joined(separator: ", "))]")
   }
+}
+
+func show_vlandb(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  // RTM_GETVLAN dump: unlike the libnl bitmaps this carries the full per-VID
+  // flags, including the dynamic (protocol-learned) flag.
+  let bridgeIndex = (link.master == 0 || link.master == link.index) ? link.index : link.master
+  var any = false
+  for try await vlandb in try await socket.getBridgeVLANs() {
+    guard vlandb.ifIndex == link.index || vlandb.ifIndex == bridgeIndex else { continue }
+    any = true
+    print("ifindex \(vlandb.ifIndex):")
+    for entry in vlandb.entries.sorted(by: { $0.vid < $1.vid }) {
+      var flags: [String] = []
+      if entry.isPVID { flags.append("PVID") }
+      if entry.isUntagged { flags.append("untagged") }
+      if entry.isDynamic { flags.append("dynamic") }
+      if flags.isEmpty { flags.append("tagged") }
+      print("  vid \(entry.vid) [\(flags.joined(separator: ", "))]")
+    }
+  }
+  if !any { print("  (no VLAN DB entries for \(link.name))") }
 }
 
 func show_pvid(
@@ -541,8 +573,10 @@ enum nltool {
       let link = try await findLink(named: CommandLine.arguments[2], socket: socket)
       let commands: [Command: CommandHandler] = [
         .add_vlan: add_vlan,
+        .add_dynamic_vlan: add_vlan,
         .del_vlan: del_vlan,
         .show_vlan: show_vlan,
+        .show_vlandb: show_vlandb,
         .show_pvid: show_pvid,
         .add_fdb: add_fdb,
         .del_fdb: del_fdb,
