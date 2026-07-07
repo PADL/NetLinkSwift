@@ -390,6 +390,7 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
   public func remove(
     link: RTNLLink? = nil,
     fdbEntry macAddress: LinkAddress,
+    vlan vlanID: UInt16? = nil,
     socket: NLSocket
   ) async throws {
     let bridgeIndex: Int?
@@ -407,6 +408,7 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
       bridgeIndex: bridgeIndex,
       interfaceIndex: interfaceIndex,
       macAddress: macAddress,
+      vlanID: vlanID,
       moreFlags: _bridgeFlags,
       operation: .delete
     )
@@ -841,6 +843,7 @@ public extension NLSocket {
     bridgeIndex: Int? = nil,
     interfaceIndex: Int,
     macAddress: RTNLLink.LinkAddress,
+    vlanID: UInt16? = nil,
     moreFlags: UInt16 = 0,
     operation: NLMessage.Operation
   ) async throws {
@@ -866,6 +869,9 @@ public extension NLSocket {
     }
     if let bridgeIndex {
       try message.put(u32: UInt32(bridgeIndex), for: CInt(NDA_MASTER))
+    }
+    if let vlanID {
+      try message.put(u16: vlanID, for: CInt(NDA_VLAN))
     }
     try await ackRequest(message: message)
   }
