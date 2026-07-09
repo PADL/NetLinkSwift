@@ -414,6 +414,34 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
     )
   }
 
+  /// Bulk-delete this port's Dynamic Filtering Entries (learned FDB, 8.8.3),
+  /// optionally scoped to a VLAN, via one RTM_DELNEIGH/NLM_F_BULK. Only entries
+  /// with NUD_PERMANENT clear are matched, so local/static entries and MMRP/SRP
+  /// registrations are left intact.
+  public func flush(
+    fdbEntriesForLink link: RTNLLink? = nil,
+    vlan vlanID: UInt16? = nil,
+    socket: NLSocket
+  ) async throws {
+    let bridgeIndex: Int?
+    let interfaceIndex: Int
+
+    if let link, link.index != index {
+      bridgeIndex = index
+      interfaceIndex = link.index
+    } else {
+      bridgeIndex = nil
+      interfaceIndex = index
+    }
+
+    try await socket._neighborFlushRequest(
+      bridgeIndex: bridgeIndex,
+      interfaceIndex: interfaceIndex,
+      vlanID: vlanID,
+      moreFlags: _bridgeFlags
+    )
+  }
+
   /// The state of an MDB entry (`br_mdb_entry.state`). The raw values mirror
   /// the kernel `MDB_*` UAPI constants; `dynamicReservation` may be absent
   /// from older host `<linux/if_bridge.h>`, so the values are defined here.
@@ -867,6 +895,38 @@ public extension NLSocket {
       let macAddressBytes = [UInt8](bytes)
       try message.put(data: macAddressBytes, for: CInt(NDA_LLADDR))
     }
+    if let bridgeIndex {
+      try message.put(u32: UInt32(bridgeIndex), for: CInt(NDA_MASTER))
+    }
+    if let vlanID {
+      try message.put(u16: vlanID, for: CInt(NDA_VLAN))
+    }
+    try await ackRequest(message: message)
+  }
+
+  // Bulk RTM_DELNEIGH (NLM_F_BULK): the kernel iterates the FDB and deletes every
+  // entry matching the filter, so no dump is needed. NDA_NDM_STATE_MASK restricts
+  // the match to the NUD_PERMANENT bit and ndm_state leaves it clear, so only
+  // learned (non-permanent) entries are removed.
+  fileprivate func _neighborFlushRequest(
+    bridgeIndex: Int? = nil,
+    interfaceIndex: Int,
+    vlanID: UInt16? = nil,
+    moreFlags: UInt16 = 0
+  ) async throws {
+    let message = try NLMessage(socket: self, type: RTM_DELNEIGH, flags: [.bulk])
+    var msg = ndmsg()
+    msg.ndm_ifindex = Int32(interfaceIndex)
+    msg.ndm_family = UInt8(AF_BRIDGE)
+    msg.ndm_state = 0
+    msg.ndm_flags = (moreFlags & UInt16(BRIDGE_FLAGS_SELF)) != 0 ? UInt8(NTF_SELF) : 0
+    if bridgeIndex != nil {
+      msg.ndm_flags |= UInt8(NTF_MASTER)
+    }
+    try withUnsafeBytes(of: &msg) {
+      try message.append(Array($0))
+    }
+    try message.put(u16: UInt16(NUD_PERMANENT), for: CInt(NDA_NDM_STATE_MASK))
     if let bridgeIndex {
       try message.put(u32: UInt32(bridgeIndex), for: CInt(NDA_MASTER))
     }
