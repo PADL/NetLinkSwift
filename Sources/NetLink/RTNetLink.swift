@@ -1444,6 +1444,169 @@ private extension NLSocket {
       operation: operation
     )
   }
+
+  // The clsact qdisc: the attach point for ingress/egress classifier filters.
+  func _clsActQDiscRequest(
+    interfaceIndex: Int,
+    operation: NLMessage.Operation
+  ) async throws {
+    var dummy = ()
+    try await _tcRequest(
+      interfaceIndex: interfaceIndex,
+      kind: "clsact",
+      handle: TCHandle.clsActQDisc,
+      parent: TCHandle.clsAct,
+      options: &dummy,
+      operation: operation
+    )
+  }
+
+  // Build a cls_flower ingress tfilter (RTM_NEWTFILTER/DELTFILTER). `priority` identifies
+  // the filter within the ingress chain (its tcm_info, with the 802.1Q protocol).
+  func _flowerFilterRequest(
+    interfaceIndex: Int,
+    priority: UInt16,
+    fillOptions: (_: borrowing NLMessage) throws -> (),
+    operation: NLMessage.Operation
+  ) async throws {
+    let message = try NLMessage(
+      socket: self,
+      type: operation != .delete ? RTM_NEWTFILTER : RTM_DELTFILTER,
+      operation: operation
+    )
+    var tchdr = tcmsg()
+    tchdr.tcm_family = UInt8(AF_UNSPEC)
+    tchdr.tcm_ifindex = CInt(interfaceIndex)
+    tchdr.tcm_parent = TCHandle.clsActIngress
+    tchdr.tcm_handle = 0
+    // tcm_info = TC_H_MAKE(prio << 16, htons(ETH_P_8021Q))
+    tchdr.tcm_info = (UInt32(priority) << 16) | UInt32(UInt16(ETH_P_8021Q).bigEndian)
+    try message.append(opaque: &tchdr)
+    try message.put(string: "flower", for: CInt(TCA_KIND))
+    if operation != .delete {
+      let attr = message.nestStart(attr: CInt(TCA_OPTIONS))
+      try fillOptions(message)
+      message.nestEnd(attr: attr)
+    }
+    try await ackRequest(message: message)
+  }
+
+  // A single-action list (TCA_..._ACT nest) holding one action of `kind` whose options
+  // are a struct tc_gen-based parameter block (tc_gact / tc_vlan).
+  private func _putSingleAction(
+    _ message: borrowing NLMessage,
+    actAttr: CInt,
+    kind: String,
+    parms: (attr: CInt, bytes: [UInt8]),
+    extra: (_: borrowing NLMessage) throws -> () = { _ in }
+  ) throws {
+    let act = message.nestStart(attr: actAttr)
+    let one = message.nestStart(attr: 1) // action index 1
+    try message.put(string: kind, for: CInt(TCA_ACT_KIND))
+    let opts = message.nestStart(attr: CInt(TCA_ACT_OPTIONS))
+    try message.put(data: parms.bytes, for: parms.attr)
+    try extra(message)
+    message.nestEnd(attr: opts)
+    message.nestEnd(attr: one)
+    message.nestEnd(attr: act)
+  }
+
+  // Ingress flower rule: SR-priority frames (VLAN PCP == vlanPriority) that did NOT hit a
+  // dynamic reservation FDB entry are dropped (ProAV §6 core-port admission).
+  func _flowerDynamicReservationDropRequest(
+    interfaceIndex: Int,
+    vlanPriority: UInt8,
+    priority: UInt16,
+    operation: NLMessage.Operation
+  ) async throws {
+    try await _flowerFilterRequest(
+      interfaceIndex: interfaceIndex,
+      priority: priority,
+      fillOptions: { message in
+        try message.put(u8: vlanPriority, for: CInt(TCA_FLOWER_KEY_VLAN_PRIO))
+        try message.put(u8: 0, for: CInt(TCA_FLOWER_DYNAMIC_RESERVATION_HIT))
+        var gact = tc_gact()
+        gact.action = TC_ACT_SHOT
+        try self._putSingleAction(
+          message,
+          actAttr: CInt(TCA_FLOWER_ACT),
+          kind: "gact",
+          parms: (CInt(TCA_GACT_PARMS), withUnsafeBytes(of: &gact) { Array($0) })
+        )
+      },
+      operation: operation
+    )
+  }
+
+  // Ingress flower rule: SR-priority frames (VLAN PCP == vlanPriority) have their PCP
+  // regenerated to 0 in place, preserving the VID (802.1Q Table 6-5 / §6.9.4 boundary).
+  // act_pedit masks the PCP bits of the in-payload 802.1Q TCI; it does not see a tag that
+  // hardware VLAN offload has moved into skb metadata.
+  func _flowerPriorityRegenRequest(
+    interfaceIndex: Int,
+    vlanPriority: UInt8,
+    priority: UInt16,
+    operation: NLMessage.Operation
+  ) async throws {
+    try await _flowerFilterRequest(
+      interfaceIndex: interfaceIndex,
+      priority: priority,
+      fillOptions: { message in
+        try message.put(u8: vlanPriority, for: CInt(TCA_FLOWER_KEY_VLAN_PRIO))
+        // tc_pedit_sel (action PIPE, one key) followed by its tc_pedit_key: clear the top
+        // three bits (PCP) of the TCI word at eth offset 12. bigEndian == native on-target.
+        var sel = tc_pedit_sel()
+        sel.action = TC_ACT_PIPE
+        sel.nkeys = 1
+        var key = tc_pedit_key()
+        key.mask = UInt32(0xFFFF_1FFF).bigEndian
+        key.val = 0
+        key.off = 12
+        var blob = withUnsafeBytes(of: &sel) { Array($0) }
+        blob += withUnsafeBytes(of: &key) { Array($0) }
+        try self._putSingleAction(
+          message,
+          actAttr: CInt(TCA_FLOWER_ACT),
+          kind: "pedit",
+          parms: (CInt(TCA_PEDIT_PARMS_EX), blob),
+          extra: { message in
+            let keysEx = message.nestStart(attr: CInt(TCA_PEDIT_KEYS_EX))
+            let keyEx = message.nestStart(attr: CInt(TCA_PEDIT_KEY_EX))
+            try message.put(
+              u16: UInt16(TCA_PEDIT_KEY_EX_HDR_TYPE_ETH.rawValue),
+              for: CInt(TCA_PEDIT_KEY_EX_HTYPE)
+            )
+            try message.put(
+              u16: UInt16(TCA_PEDIT_KEY_EX_CMD_SET.rawValue), for: CInt(TCA_PEDIT_KEY_EX_CMD)
+            )
+            message.nestEnd(attr: keyEx)
+            message.nestEnd(attr: keysEx)
+          }
+        )
+      },
+      operation: operation
+    )
+  }
+
+  // Delete an ingress flower rule by its identifying priority.
+  func _flowerFilterDeleteRequest(
+    interfaceIndex: Int,
+    priority: UInt16
+  ) async throws {
+    try await _flowerFilterRequest(
+      interfaceIndex: interfaceIndex,
+      priority: priority,
+      fillOptions: { _ in },
+      operation: .delete
+    )
+  }
+}
+
+// Well-known tc handles (pkt_sched.h macros are not visible to Swift).
+enum TCHandle {
+  static let clsAct: UInt32 = 0xFFFF_FFF1 // TC_H_CLSACT
+  static let clsActQDisc: UInt32 = 0xFFFF_0000 // TC_H_MAKE(TC_H_CLSACT, 0)
+  static let clsActIngress: UInt32 = 0xFFFF_FFF2 // TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS)
 }
 
 public extension RTNLLink {
@@ -1509,6 +1672,40 @@ public extension RTNLLink {
         operation: .delete
       )
     }
+  }
+
+  // Install the clsact qdisc (the ingress classifier attach point); idempotent.
+  func addClsActQDisc(socket: NLSocket) async throws {
+    try await socket._clsActQDiscRequest(interfaceIndex: index, operation: .addOrUpdate)
+  }
+
+  func removeClsActQDisc(socket: NLSocket) async throws {
+    try await socket._clsActQDiscRequest(interfaceIndex: index, operation: .delete)
+  }
+
+  // Add an ingress flower rule dropping un-reserved SR-priority (VLAN PCP) frames.
+  // addOrUpdate (not add) so a re-apply replaces rather than failing with EEXIST.
+  func addFlowerDynamicReservationDrop(
+    vlanPriority: UInt8, priority: UInt16, socket: NLSocket
+  ) async throws {
+    try await socket._flowerDynamicReservationDropRequest(
+      interfaceIndex: index, vlanPriority: vlanPriority, priority: priority,
+      operation: .addOrUpdate
+    )
+  }
+
+  // Add an ingress flower rule regenerating SR-priority frames' PCP to 0 (boundary port).
+  func addFlowerPriorityRegen(
+    vlanPriority: UInt8, priority: UInt16, socket: NLSocket
+  ) async throws {
+    try await socket._flowerPriorityRegenRequest(
+      interfaceIndex: index, vlanPriority: vlanPriority, priority: priority,
+      operation: .addOrUpdate
+    )
+  }
+
+  func removeFlowerFilter(priority: UInt16, socket: NLSocket) async throws {
+    try await socket._flowerFilterDeleteRequest(interfaceIndex: index, priority: priority)
   }
 }
 

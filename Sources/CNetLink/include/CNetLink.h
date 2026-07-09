@@ -13,6 +13,17 @@
 #include <linux/genetlink.h>
 #include <linux/netfilter/nfnetlink_log.h>
 
+#include <linux/pkt_sched.h>
+#include <linux/pkt_cls.h>
+#include <linux/tc_act/tc_gact.h>
+#include <linux/tc_act/tc_vlan.h>
+#include <linux/tc_act/tc_pedit.h>
+
+// out-of-tree flower meta key (br dynamic-reservation FDB hit); absent from distro uapi
+#ifndef TCA_FLOWER_DYNAMIC_RESERVATION_HIT
+#define TCA_FLOWER_DYNAMIC_RESERVATION_HIT 112
+#endif
+
 #include <net/if.h>
 
 #include <netlink/errno.h>
