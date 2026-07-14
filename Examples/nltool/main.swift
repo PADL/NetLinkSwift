@@ -31,6 +31,7 @@ enum Command: CaseIterable {
   case add_fdb
   case del_fdb
   case show_fdb
+  case flush_fdb
   case add_mdb
   case add_srp_mdb
   case del_mdb
@@ -69,7 +70,7 @@ typealias CommandHandler = (Command, NLSocket, RTNLLink, String) async throws ->
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [add_vlan|add_dynamic_vlan|del_vlan|show_vlan|show_vlandb|show_pvid|add_fdb|del_fdb|show_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio|genl_family|ethtool_pause] [ifname|genl-family] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|add_dynamic_vlan|del_vlan|show_vlan|show_vlandb|show_pvid|add_fdb|del_fdb|show_fdb|flush_fdb|add_mdb|add_srp_mdb|del_mdb|show_mdb|add_mqprio|del_mqprio|show_mqprio|add_cbs|del_cbs|add_pcp_prio|del_pcp_prio|show_pcp_prio|genl_family|ethtool_pause] [ifname|genl-family] [vid|mac-address|parent:handle|pcp:priority[,pcp:priority...]]"
   )
   exit(1)
 }
@@ -172,6 +173,17 @@ func del_mdb(
   let bridge = try await findBridge(index: link.master, socket: socket)
   let groupAddress = try RTNLLink.parseMacAddressString(arg)
   try await bridge.remove(link: link, groupAddresses: [groupAddress], socket: socket)
+}
+
+func flush_fdb(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLink,
+  arg: String
+) async throws {
+  // bulk-delete this port's learned FDB entries for the VID (8.8.3, 11.2.5).
+  guard let vlan = UInt16(arg) else { usage() }
+  try await link.flush(fdbEntriesForVLAN: vlan, socket: socket)
 }
 
 func formatMac(_ addr: RTNLLink.LinkAddress) -> String {
@@ -584,6 +596,7 @@ enum nltool {
         .add_fdb: add_fdb,
         .del_fdb: del_fdb,
         .show_fdb: show_fdb,
+        .flush_fdb: flush_fdb,
         .add_mdb: add_mdb,
         .add_srp_mdb: add_mdb,
         .del_mdb: del_mdb,
