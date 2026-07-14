@@ -319,6 +319,23 @@ Sendable, CustomStringConvertible,
       value
     )
   }
+
+  /// Bulk-delete this port's Dynamic Filtering Entries (learned FDB, 8.8.3),
+  /// optionally scoped to a VLAN, via one RTM_DELNEIGH/NLM_F_BULK. Only
+  /// non-permanent entries match, so local/static entries and MMRP/SRP
+  /// registrations are left intact. A plain NIC has no offloaded FDB, so the
+  /// NTF_SELF leg reports EOPNOTSUPP; the NTF_MASTER flush has already run.
+  public func flush(
+    fdbEntriesForVLAN vlanID: UInt16? = nil,
+    socket: NLSocket
+  ) async throws {
+    do {
+      try await socket._neighborFlushRequest(
+        interfaceIndex: index,
+        vlanID: vlanID
+      )
+    } catch Errno.notSupported {}
+  }
 }
 
 public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
@@ -411,34 +428,6 @@ public final class RTNLLinkBridge: RTNLLink, @unchecked Sendable {
       vlanID: vlanID,
       moreFlags: _bridgeFlags,
       operation: .delete
-    )
-  }
-
-  /// Bulk-delete this port's Dynamic Filtering Entries (learned FDB, 8.8.3),
-  /// optionally scoped to a VLAN, via one RTM_DELNEIGH/NLM_F_BULK. Only entries
-  /// with NUD_PERMANENT clear are matched, so local/static entries and MMRP/SRP
-  /// registrations are left intact.
-  public func flush(
-    fdbEntriesForLink link: RTNLLink? = nil,
-    vlan vlanID: UInt16? = nil,
-    socket: NLSocket
-  ) async throws {
-    let bridgeIndex: Int?
-    let interfaceIndex: Int
-
-    if let link, link.index != index {
-      bridgeIndex = index
-      interfaceIndex = link.index
-    } else {
-      bridgeIndex = nil
-      interfaceIndex = index
-    }
-
-    try await socket._neighborFlushRequest(
-      bridgeIndex: bridgeIndex,
-      interfaceIndex: interfaceIndex,
-      vlanID: vlanID,
-      moreFlags: _bridgeFlags
     )
   }
 
@@ -904,32 +893,24 @@ public extension NLSocket {
     try await ackRequest(message: message)
   }
 
-  // Bulk RTM_DELNEIGH (NLM_F_BULK): the kernel iterates the FDB and deletes every
-  // entry matching the filter, so no dump is needed. NDA_NDM_STATE_MASK restricts
-  // the match to the NUD_PERMANENT bit and ndm_state leaves it clear, so only
-  // learned (non-permanent) entries are removed.
+  // Bulk RTM_DELNEIGH (NLM_F_BULK) over one port. NTF_MASTER clears the software
+  // bridge FDB; NTF_SELF clears the port's own offloaded FDB (e.g. a switch ATU
+  // under DSA). One message thus serves a software bridge and a hardware switch.
+  // NDA_NDM_STATE_MASK/ndm_state match only non-permanent (learned) entries.
   fileprivate func _neighborFlushRequest(
-    bridgeIndex: Int? = nil,
     interfaceIndex: Int,
-    vlanID: UInt16? = nil,
-    moreFlags: UInt16 = 0
+    vlanID: UInt16? = nil
   ) async throws {
     let message = try NLMessage(socket: self, type: RTM_DELNEIGH, flags: [.bulk])
     var msg = ndmsg()
     msg.ndm_ifindex = Int32(interfaceIndex)
     msg.ndm_family = UInt8(AF_BRIDGE)
     msg.ndm_state = 0
-    msg.ndm_flags = (moreFlags & UInt16(BRIDGE_FLAGS_SELF)) != 0 ? UInt8(NTF_SELF) : 0
-    if bridgeIndex != nil {
-      msg.ndm_flags |= UInt8(NTF_MASTER)
-    }
+    msg.ndm_flags = UInt8(NTF_MASTER) | UInt8(NTF_SELF)
     try withUnsafeBytes(of: &msg) {
       try message.append(Array($0))
     }
     try message.put(u16: UInt16(NUD_PERMANENT), for: CInt(NDA_NDM_STATE_MASK))
-    if let bridgeIndex {
-      try message.put(u32: UInt32(bridgeIndex), for: CInt(NDA_MASTER))
-    }
     if let vlanID {
       try message.put(u16: vlanID, for: CInt(NDA_VLAN))
     }
