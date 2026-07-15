@@ -1,0 +1,3 @@
+module CNFTables {
+  umbrella header "include/CNFTables.h"
+}

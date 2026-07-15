@@ -55,9 +55,17 @@ let package = Package(
         .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3-dev", "libnl-genl-3-dev"]),
       ]
     ),
+    .systemLibrary(
+      name: "CNFTables",
+      pkgConfig: "libmnl libnftnl",
+      providers: [
+        .apt(["libmnl-dev", "libnftnl-dev"]),
+      ]
+    ),
     .target(
       name: "NetLink",
       dependencies: ["CNetLink",
+                     "CNFTables",
                      .product(name: "CLinuxSockAddr", package: "SocketAddress"),
                      .product(name: "SocketAddress", package: "SocketAddress"),
                      .product(name: "SystemPackage", package: "swift-system"),
