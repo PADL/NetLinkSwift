@@ -13,6 +13,8 @@ PlatformLinkerSettings += [
   .linkedLibrary("nl-route-3"),
   .linkedLibrary("nl-nf-3"),
   .linkedLibrary("nl-genl-3"),
+  .linkedLibrary("mnl"),
+  .linkedLibrary("nftnl"),
 ]
 
 let package = Package(
@@ -57,7 +59,6 @@ let package = Package(
     ),
     .systemLibrary(
       name: "CNFTables",
-      pkgConfig: "libmnl libnftnl",
       providers: [
         .apt(["libmnl-dev", "libnftnl-dev"]),
       ]
