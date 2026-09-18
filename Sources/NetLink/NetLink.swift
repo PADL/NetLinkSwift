@@ -351,8 +351,14 @@ Sendable {
     nl_socket_disable_seq_check(sk)
     _sk = sk
 
-    try throwingNLError {
-      nl_connect(sk, `protocol`)
+    do {
+      try throwingNLError {
+        nl_connect(sk, `protocol`)
+      }
+    } catch {
+      // deinit does not run for an initializer that throws
+      nl_socket_free(sk)
+      throw error
     }
     nl_socket_set_nonblocking(sk)
 
