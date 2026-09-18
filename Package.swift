@@ -3,12 +3,7 @@
 
 import PackageDescription
 
-var PlatformCSettings: [CSetting] = []
-var PlatformLinkerSettings: [LinkerSetting] = []
-
-PlatformCSettings = [.unsafeFlags(["-I", "/usr/include/libnl3"])]
-
-PlatformLinkerSettings += [
+let PlatformLinkerSettings: [LinkerSetting] = [
   .linkedLibrary("nl-3"),
   .linkedLibrary("nl-route-3"),
   .linkedLibrary("nl-nf-3"),
@@ -52,13 +47,14 @@ let package = Package(
   targets: [
     .systemLibrary(
       name: "CNetLink",
-      pkgConfig: "libnl-3 libnl-route-3 libnl-nf-3 libnl-genl-3",
+      pkgConfig: "libnl-3.0 libnl-route-3.0 libnl-nf-3.0 libnl-genl-3.0",
       providers: [
         .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3-dev", "libnl-genl-3-dev"]),
       ]
     ),
     .systemLibrary(
       name: "CNFTables",
+      pkgConfig: "libmnl libnftnl",
       providers: [
         .apt(["libmnl-dev", "libnftnl-dev"]),
       ]
@@ -72,7 +68,6 @@ let package = Package(
                      .product(name: "SystemPackage", package: "swift-system"),
                      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                      "AsyncExtensions"],
-      cSettings: PlatformCSettings,
       swiftSettings: [
         .enableExperimentalFeature("StrictConcurrency"),
         .enableExperimentalFeature("NonisolatedNonsendingByDefault"),
@@ -82,32 +77,27 @@ let package = Package(
     .executableTarget(
       name: "nldump",
       dependencies: ["NetLink"],
-      path: "Examples/nldump",
-      cSettings: PlatformCSettings
+      path: "Examples/nldump"
     ),
     .executableTarget(
       name: "nlmonitor",
       dependencies: ["NetLink"],
-      path: "Examples/nlmonitor",
-      cSettings: PlatformCSettings
+      path: "Examples/nlmonitor"
     ),
     .executableTarget(
       name: "nltool",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-      path: "Examples/nltool",
-      cSettings: PlatformCSettings
+      path: "Examples/nltool"
     ),
     .executableTarget(
       name: "setmacaddr",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-      path: "Examples/setmacaddr",
-      cSettings: PlatformCSettings
+      path: "Examples/setmacaddr"
     ),
     .executableTarget(
       name: "brport",
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-      path: "Examples/brport",
-      cSettings: PlatformCSettings
+      path: "Examples/brport"
     ),
   ]
 )
