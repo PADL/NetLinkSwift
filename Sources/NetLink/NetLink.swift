@@ -360,7 +360,11 @@ Sendable {
     precondition(fd >= 0)
 
     _readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: _queue)
-    _readSource.setEventHandler(handler: onReadReady)
+    // the source outlives the socket until it is cancelled, so it must not retain it; the
+    // descriptor stays open until then, as a source's descriptor must
+    _readSource.setEventHandler { [weak self] in self?.onReadReady() }
+    nonisolated(unsafe) let socket = sk
+    _readSource.setCancelHandler { nl_socket_free(socket) }
 
     nl_socket_modify_cb(
       sk,
@@ -397,7 +401,6 @@ Sendable {
     _readSource.cancel()
     _notificationsContinuation.finish()
     _notificationErrorsContinuation.finish()
-    nl_socket_free(_sk)
   }
 
   public func connect(proto: CInt) throws {

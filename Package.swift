@@ -99,5 +99,9 @@ let package = Package(
       dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
       path: "Examples/brport"
     ),
+    .testTarget(
+      name: "NetLinkTests",
+      dependencies: ["NetLink"]
+    ),
   ]
 )
