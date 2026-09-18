@@ -301,6 +301,7 @@ Sendable {
   private typealias Stream = AsyncThrowingStream<NLObjectConstructible, Error>
   private typealias Ack = CheckedContinuation<(), Error>
   public typealias NotificationStream = AsyncThrowingStream<NLObjectConstructible, Error>
+  public typealias NotificationErrorStream = AsyncStream<Error>
 
   private enum _Request {
     case continuation(Continuation)
@@ -323,12 +324,28 @@ Sendable {
   private let _requests = Mutex<[UInt32: _Request]>([:])
 
   private let _notificationsContinuation: NotificationStream.Continuation
+
+  /// Successfully decoded unsolicited messages. Never terminated by a receive or decode
+  /// failure: those are recoverable and are reported on `notificationErrors` instead.
   public let notifications: NotificationStream
+
+  private let _notificationErrorsContinuation: NotificationErrorStream.Continuation
+
+  /// Receive and decode failures that belong to no pending request. The socket stays usable
+  /// and only queued messages were lost, so a consumer that mirrors kernel state should
+  /// re-read it when one arrives. Only the most recent is buffered.
+  public let notificationErrors: NotificationErrorStream
 
   public init(protocol: Int32) throws {
     var continuation: NotificationStream.Continuation!
     notifications = NotificationStream(bufferingPolicy: .unbounded) { continuation = $0 }
     _notificationsContinuation = continuation
+
+    var errorContinuation: NotificationErrorStream.Continuation!
+    notificationErrors = NotificationErrorStream(bufferingPolicy: .bufferingNewest(1)) {
+      errorContinuation = $0
+    }
+    _notificationErrorsContinuation = errorContinuation
 
     guard let sk = nl_socket_alloc() else { throw NLError.noMemory }
     nl_socket_disable_seq_check(sk)
@@ -379,6 +396,7 @@ Sendable {
   deinit {
     _readSource.cancel()
     _notificationsContinuation.finish()
+    _notificationErrorsContinuation.finish()
     nl_socket_free(_sk)
   }
 
@@ -496,6 +514,10 @@ Sendable {
           continuation.resume()
         }
       }
+    } else if case let .failure(error) = result {
+      // yielding this to `notifications` would terminate the stream, leaving the consumer
+      // blind to every later message over one dropped or malformed one
+      _notificationErrorsContinuation.yield(error)
     } else {
       _notificationsContinuation.yield(with: result)
     }
