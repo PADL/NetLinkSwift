@@ -23,89 +23,144 @@ import SystemPackage
 // libmnl's MNL_SOCKET_BUFFER_SIZE macro (min(pagesize, 8192)) is not importable.
 private let mnlBufferSize = min(sysconf(Int32(_SC_PAGESIZE)), 8192)
 
-// MARK: - RAII wrappers over the libnftnl objects
+// MARK: - nf_tables objects
 
-// Each type owns its C handle and frees it on deinit, so there is no manual
-// free/defer bookkeeping. nftnl_rule_add_expr transfers expr ownership to the
-// rule, so NFTExpr relinquishes its handle (suppressing its own free) on add.
+// Each object encodes itself as the NFTA_* attributes of an nf_tables message,
+// in the order libnftnl emits them. Integer attributes are big-endian.
 
-public struct NFTExpr: ~Copyable {
-  let handle: OpaquePointer
+public struct NFTTable: Sendable {
+  public var name: String
+  public var flags: UInt32?
 
-  public init(_ name: String) throws {
-    guard let e = nftnl_expr_alloc(name) else { throw Errno.noMemory }
-    handle = e
+  public init(name: String, flags: UInt32? = nil) {
+    self.name = name
+    self.flags = flags
   }
 
-  deinit { nftnl_expr_free(handle) }
-
-  public func setU32(_ attr: UInt16, _ value: UInt32) { nftnl_expr_set_u32(handle, attr, value) }
-
-  public func setData(_ attr: UInt16, _ bytes: UnsafeRawBufferPointer) {
-    nftnl_expr_set(handle, attr, bytes.baseAddress, UInt32(bytes.count))
-  }
-
-  // hand the expr to a rule, which now owns and will free it
-  consuming func release() -> OpaquePointer {
-    let h = handle
-    discard self
-    return h
+  func buildPayload(_ nlh: UnsafeMutablePointer<nlmsghdr>) {
+    mnl_attr_put_strz(nlh, u16(NFTA_TABLE_NAME), name)
+    if let flags { mnl_attr_put_u32(nlh, u16(NFTA_TABLE_FLAGS), flags.bigEndian) }
   }
 }
 
-public struct NFTRule: ~Copyable {
-  let handle: OpaquePointer
+public struct NFTChain: Sendable {
+  public struct Hook: Sendable {
+    public var number: UInt32
+    public var priority: Int32
 
-  public init() throws {
-    guard let r = nftnl_rule_alloc() else { throw Errno.noMemory }
-    handle = r
+    public init(number: UInt32, priority: Int32) {
+      self.number = number
+      self.priority = priority
+    }
   }
 
-  deinit { nftnl_rule_free(handle) }
+  public var table: String
+  public var name: String
+  public var type: String?
+  public var hook: Hook?
+  public var policy: UInt32?
 
-  public func setStr(_ attr: UInt16, _ value: String) { nftnl_rule_set_str(handle, attr, value) }
-  public func setU32(_ attr: UInt16, _ value: UInt32) { nftnl_rule_set_u32(handle, attr, value) }
-  public func add(_ expr: consuming NFTExpr) { nftnl_rule_add_expr(handle, expr.release()) }
+  public init(
+    table: String,
+    name: String,
+    type: String? = nil,
+    hook: Hook? = nil,
+    policy: UInt32? = nil
+  ) {
+    self.table = table
+    self.name = name
+    self.type = type
+    self.hook = hook
+    self.policy = policy
+  }
 
   func buildPayload(_ nlh: UnsafeMutablePointer<nlmsghdr>) {
-    nftnl_rule_nlmsg_build_payload(nlh, handle)
+    mnl_attr_put_strz(nlh, u16(NFTA_CHAIN_TABLE), table)
+    mnl_attr_put_strz(nlh, u16(NFTA_CHAIN_NAME), name)
+    if let hook {
+      let nest = mnl_attr_nest_start(nlh, u16(NFTA_CHAIN_HOOK))
+      mnl_attr_put_u32(nlh, u16(NFTA_HOOK_HOOKNUM), hook.number.bigEndian)
+      mnl_attr_put_u32(nlh, u16(NFTA_HOOK_PRIORITY), UInt32(bitPattern: hook.priority).bigEndian)
+      mnl_attr_nest_end(nlh, nest)
+    }
+    if let policy { mnl_attr_put_u32(nlh, u16(NFTA_CHAIN_POLICY), policy.bigEndian) }
+    if let type { mnl_attr_put_strz(nlh, u16(NFTA_CHAIN_TYPE), type) }
   }
 }
 
-public struct NFTTable: ~Copyable {
-  let handle: OpaquePointer
+public enum NFTExpr: Sendable {
+  /// load meta key `key` into register `dreg`
+  case meta(key: UInt32, dreg: UInt32)
+  /// compare register `sreg` against `data` with operator `op`
+  case cmp(sreg: UInt32, op: UInt32, data: [UInt8])
+  /// load `length` bytes at `offset` from header `base` into register `dreg`
+  case payload(base: UInt32, offset: UInt32, length: UInt32, dreg: UInt32)
+  /// set the verdict register to `verdict` (e.g. NF_DROP)
+  case verdict(Int32)
 
-  public init() throws {
-    guard let t = nftnl_table_alloc() else { throw Errno.noMemory }
-    handle = t
+  private var name: String {
+    switch self {
+    case .meta: "meta"
+    case .cmp: "cmp"
+    case .payload: "payload"
+    case .verdict: "immediate"
+    }
   }
 
-  deinit { nftnl_table_free(handle) }
-
-  public func setStr(_ attr: UInt16, _ value: String) { nftnl_table_set_str(handle, attr, value) }
-  public func setU32(_ attr: UInt16, _ value: UInt32) { nftnl_table_set_u32(handle, attr, value) }
-
   func buildPayload(_ nlh: UnsafeMutablePointer<nlmsghdr>) {
-    nftnl_table_nlmsg_build_payload(nlh, handle)
+    mnl_attr_put_strz(nlh, u16(NFTA_EXPR_NAME), name)
+    let data = mnl_attr_nest_start(nlh, u16(NFTA_EXPR_DATA))
+    switch self {
+    case let .meta(key, dreg):
+      mnl_attr_put_u32(nlh, u16(NFTA_META_KEY), key.bigEndian)
+      mnl_attr_put_u32(nlh, u16(NFTA_META_DREG), dreg.bigEndian)
+    case let .cmp(sreg, op, value):
+      mnl_attr_put_u32(nlh, u16(NFTA_CMP_SREG), sreg.bigEndian)
+      mnl_attr_put_u32(nlh, u16(NFTA_CMP_OP), op.bigEndian)
+      let nest = mnl_attr_nest_start(nlh, u16(NFTA_CMP_DATA))
+      value.withUnsafeBytes { mnl_attr_put(nlh, u16(NFTA_DATA_VALUE), $0.count, $0.baseAddress) }
+      mnl_attr_nest_end(nlh, nest)
+    case let .payload(base, offset, length, dreg):
+      mnl_attr_put_u32(nlh, u16(NFTA_PAYLOAD_DREG), dreg.bigEndian)
+      mnl_attr_put_u32(nlh, u16(NFTA_PAYLOAD_BASE), base.bigEndian)
+      mnl_attr_put_u32(nlh, u16(NFTA_PAYLOAD_OFFSET), offset.bigEndian)
+      mnl_attr_put_u32(nlh, u16(NFTA_PAYLOAD_LEN), length.bigEndian)
+    case let .verdict(code):
+      mnl_attr_put_u32(nlh, u16(NFTA_IMMEDIATE_DREG), u32(NFT_REG_VERDICT).bigEndian)
+      let immediate = mnl_attr_nest_start(nlh, u16(NFTA_IMMEDIATE_DATA))
+      let verdict = mnl_attr_nest_start(nlh, u16(NFTA_DATA_VERDICT))
+      mnl_attr_put_u32(nlh, u16(NFTA_VERDICT_CODE), UInt32(bitPattern: code).bigEndian)
+      mnl_attr_nest_end(nlh, verdict)
+      mnl_attr_nest_end(nlh, immediate)
+    }
+    mnl_attr_nest_end(nlh, data)
   }
 }
 
-public struct NFTChain: ~Copyable {
-  let handle: OpaquePointer
+public struct NFTRule: Sendable {
+  public var table: String
+  public var chain: String
+  public var expressions: [NFTExpr]
 
-  public init() throws {
-    guard let c = nftnl_chain_alloc() else { throw Errno.noMemory }
-    handle = c
+  public init(table: String, chain: String, expressions: [NFTExpr] = []) {
+    self.table = table
+    self.chain = chain
+    self.expressions = expressions
   }
 
-  deinit { nftnl_chain_free(handle) }
-
-  public func setStr(_ attr: UInt16, _ value: String) { nftnl_chain_set_str(handle, attr, value) }
-  public func setU32(_ attr: UInt16, _ value: UInt32) { nftnl_chain_set_u32(handle, attr, value) }
-  public func setS32(_ attr: UInt16, _ value: Int32) { nftnl_chain_set_s32(handle, attr, value) }
+  public mutating func add(_ expr: NFTExpr) { expressions.append(expr) }
 
   func buildPayload(_ nlh: UnsafeMutablePointer<nlmsghdr>) {
-    nftnl_chain_nlmsg_build_payload(nlh, handle)
+    mnl_attr_put_strz(nlh, u16(NFTA_RULE_TABLE), table)
+    mnl_attr_put_strz(nlh, u16(NFTA_RULE_CHAIN), chain)
+    guard !expressions.isEmpty else { return }
+    let list = mnl_attr_nest_start(nlh, u16(NFTA_RULE_EXPRESSIONS))
+    for expr in expressions {
+      let elem = mnl_attr_nest_start(nlh, u16(NFTA_LIST_ELEM))
+      expr.buildPayload(nlh)
+      mnl_attr_nest_end(nlh, elem)
+    }
+    mnl_attr_nest_end(nlh, list)
   }
 }
 
@@ -122,18 +177,13 @@ public final class NFTBatch {
   // against the BATCH_BEGIN sequence, not an object's, so we track them all
   private(set) var sequences: [UInt32] = []
 
-  fileprivate init(nextSeq: @escaping () -> UInt32) {
+  init(nextSeq: @escaping () -> UInt32) {
     _nextSeq = nextSeq
     _buf = UnsafeMutableRawBufferPointer.allocate(
       byteCount: 2 * mnlBufferSize, alignment: MemoryLayout<UInt>.alignment
     )
     _batch = mnl_nlmsg_batch_start(_buf.baseAddress, _buf.count)
-    nftnl_batch_begin(_current, _seq())
-    mnl_nlmsg_batch_next(_batch)
-  }
-
-  private var _current: UnsafeMutablePointer<CChar> {
-    mnl_nlmsg_batch_current(_batch)!.assumingMemoryBound(to: CChar.self)
+    _batchHdr(u16(NFNL_MSG_BATCH_BEGIN))
   }
 
   private func _seq() -> UInt32 {
@@ -142,38 +192,67 @@ public final class NFTBatch {
     return seq
   }
 
-  private func _hdr(_ type: UInt16, _ flags: UInt16) -> UnsafeMutablePointer<nlmsghdr> {
-    nftnl_nlmsg_build_hdr(_current, type, u16(NFPROTO_BRIDGE), flags | u16(NLM_F_ACK), _seq())!
+  // nlmsghdr + nfgenmsg at the batch's current position
+  @discardableResult
+  private func _put(
+    type: UInt16,
+    family: UInt8,
+    flags: UInt16,
+    resID: UInt16
+  ) -> UnsafeMutablePointer<nlmsghdr> {
+    let nlh = mnl_nlmsg_put_header(mnl_nlmsg_batch_current(_batch))!
+    nlh.pointee.nlmsg_type = type
+    nlh.pointee.nlmsg_flags = u16(NLM_F_REQUEST) | flags
+    nlh.pointee.nlmsg_seq = _seq()
+    let nfh = mnl_nlmsg_put_extra_header(nlh, MemoryLayout<nfgenmsg>.size)!
+      .assumingMemoryBound(to: nfgenmsg.self)
+    nfh.pointee.nfgen_family = family
+    nfh.pointee.version = UInt8(NFNETLINK_V0)
+    nfh.pointee.res_id = resID.bigEndian
+    return nlh
   }
 
-  public func newTable(_ table: borrowing NFTTable) {
+  private func _batchHdr(_ type: UInt16) {
+    _put(type: type, family: UInt8(AF_UNSPEC), flags: 0, resID: u16(NFNL_SUBSYS_NFTABLES))
+    mnl_nlmsg_batch_next(_batch)
+  }
+
+  private func _hdr(_ type: UInt16, _ flags: UInt16) -> UnsafeMutablePointer<nlmsghdr> {
+    _put(
+      type: u16(NFNL_SUBSYS_NFTABLES) << 8 | type,
+      family: UInt8(NFPROTO_BRIDGE),
+      flags: flags | u16(NLM_F_ACK),
+      resID: 0
+    )
+  }
+
+  public func newTable(_ table: NFTTable) {
     table.buildPayload(_hdr(u16(NFT_MSG_NEWTABLE), u16(NLM_F_CREATE)))
     mnl_nlmsg_batch_next(_batch)
   }
 
-  public func newChain(_ chain: borrowing NFTChain) {
+  public func newChain(_ chain: NFTChain) {
     chain.buildPayload(_hdr(u16(NFT_MSG_NEWCHAIN), u16(NLM_F_CREATE)))
     mnl_nlmsg_batch_next(_batch)
   }
 
-  public func newRule(_ rule: borrowing NFTRule) {
+  public func newRule(_ rule: NFTRule) {
     rule.buildPayload(_hdr(u16(NFT_MSG_NEWRULE), u16(NLM_F_CREATE | NLM_F_APPEND)))
     mnl_nlmsg_batch_next(_batch)
   }
 
-  public func deleteTable(_ table: borrowing NFTTable) {
+  public func deleteTable(_ table: NFTTable) {
     table.buildPayload(_hdr(u16(NFT_MSG_DELTABLE), 0))
     mnl_nlmsg_batch_next(_batch)
   }
 
-  fileprivate func finish() {
-    nftnl_batch_end(_current, _seq())
-    mnl_nlmsg_batch_next(_batch)
+  func finish() {
+    _batchHdr(u16(NFNL_MSG_BATCH_END))
   }
 
-  fileprivate var head: UnsafeMutableRawPointer { mnl_nlmsg_batch_head(_batch) }
-  fileprivate var size: Int { mnl_nlmsg_batch_size(_batch) }
-  fileprivate func dispose() {
+  var head: UnsafeMutableRawPointer { mnl_nlmsg_batch_head(_batch) }
+  var size: Int { mnl_nlmsg_batch_size(_batch) }
+  func dispose() {
     mnl_nlmsg_batch_stop(_batch)
     _buf.deallocate()
   }
@@ -364,76 +443,61 @@ public final class NLNFTablesDropTable: Sendable {
   /// Drop frames received on bridge `bridge` whose Ethernet destination equals
   /// `destinationMAC` (6 bytes).
   public func addDrop(bridge: String, destinationMAC: [UInt8]) async throws {
-    precondition(destinationMAC.count == 6)
-
-    let rule = try NFTRule()
-    rule.setStr(u16(NFTNL_RULE_TABLE), _table)
-    rule.setStr(u16(NFTNL_RULE_CHAIN), _chain)
-    rule.setU32(u16(NFTNL_RULE_FAMILY), u32(NFPROTO_BRIDGE))
-
-    // meta bri iifname => reg1 ; cmp reg1 == bridge
-    let meta = try NFTExpr("meta")
-    meta.setU32(u16(NFTNL_EXPR_META_KEY), u32(NFT_META_BRI_IIFNAME))
-    meta.setU32(u16(NFTNL_EXPR_META_DREG), u32(NFT_REG_1))
-    rule.add(meta)
-
-    let iifCmp = try NFTExpr("cmp")
-    iifCmp.setU32(u16(NFTNL_EXPR_CMP_SREG), u32(NFT_REG_1))
-    iifCmp.setU32(u16(NFTNL_EXPR_CMP_OP), u32(NFT_CMP_EQ))
-    bridge.withCString {
-      iifCmp.setData(
-        u16(NFTNL_EXPR_CMP_DATA),
-        UnsafeRawBufferPointer(start: $0, count: bridge.utf8.count + 1)
-      )
-    }
-    rule.add(iifCmp)
-
-    // ether daddr (link-layer header, offset 0, 6 bytes) => reg1 ; cmp reg1 == mac
-    let payload = try NFTExpr("payload")
-    payload.setU32(u16(NFTNL_EXPR_PAYLOAD_BASE), u32(NFT_PAYLOAD_LL_HEADER))
-    payload.setU32(u16(NFTNL_EXPR_PAYLOAD_OFFSET), 0)
-    payload.setU32(u16(NFTNL_EXPR_PAYLOAD_LEN), 6)
-    payload.setU32(u16(NFTNL_EXPR_PAYLOAD_DREG), u32(NFT_REG_1))
-    rule.add(payload)
-
-    let macCmp = try NFTExpr("cmp")
-    macCmp.setU32(u16(NFTNL_EXPR_CMP_SREG), u32(NFT_REG_1))
-    macCmp.setU32(u16(NFTNL_EXPR_CMP_OP), u32(NFT_CMP_EQ))
-    destinationMAC.withUnsafeBytes { macCmp.setData(u16(NFTNL_EXPR_CMP_DATA), $0) }
-    rule.add(macCmp)
-
-    // immediate verdict: drop
-    let verdict = try NFTExpr("immediate")
-    verdict.setU32(u16(NFTNL_EXPR_IMM_DREG), u32(NFT_REG_VERDICT))
-    verdict.setU32(u16(NFTNL_EXPR_IMM_VERDICT), u32(NF_DROP))
-    rule.add(verdict)
-
+    let rule = Self.dropRule(
+      table: _table,
+      chain: _chain,
+      bridge: bridge,
+      destinationMAC: destinationMAC
+    )
     try await _socket.commit { $0.newRule(rule) }
   }
 
   private func _createTableAndChain() async throws {
-    let table = try NFTTable()
-    table.setStr(u16(NFTNL_TABLE_NAME), _table)
-    table.setU32(u16(NFTNL_TABLE_FAMILY), u32(NFPROTO_BRIDGE))
-    table.setU32(u16(NFTNL_TABLE_FLAGS), u32(NFT_TABLE_F_OWNER))
-
-    let chain = try NFTChain()
-    chain.setStr(u16(NFTNL_CHAIN_TABLE), _table)
-    chain.setStr(u16(NFTNL_CHAIN_NAME), _chain)
-    chain.setStr(u16(NFTNL_CHAIN_TYPE), "filter")
-    chain.setU32(u16(NFTNL_CHAIN_HOOKNUM), u32(NF_BR_PRE_ROUTING))
-    // bridge prerouting at the "dstnat" priority, matching the previous static rule
-    chain.setS32(u16(NFTNL_CHAIN_PRIO), s32(NF_BR_PRI_NAT_DST_BRIDGED))
-    chain.setU32(u16(NFTNL_CHAIN_POLICY), u32(NF_ACCEPT))
-
+    let table = Self.table(_table)
+    let chain = Self.chain(_chain, table: _table)
     try await _socket.commit {
       $0.newTable(table)
       $0.newChain(chain)
     }
   }
+
+  static func table(_ name: String) -> NFTTable {
+    NFTTable(name: name, flags: u32(NFT_TABLE_F_OWNER))
+  }
+
+  static func chain(_ name: String, table: String) -> NFTChain {
+    NFTChain(
+      table: table,
+      name: name,
+      type: "filter",
+      // bridge prerouting at the "dstnat" priority, matching the previous static rule
+      hook: .init(number: u32(NF_BR_PRE_ROUTING), priority: s32(NF_BR_PRI_NAT_DST_BRIDGED)),
+      policy: u32(NF_ACCEPT)
+    )
+  }
+
+  static func dropRule(
+    table: String,
+    chain: String,
+    bridge: String,
+    destinationMAC: [UInt8]
+  ) -> NFTRule {
+    precondition(destinationMAC.count == 6)
+
+    return NFTRule(table: table, chain: chain, expressions: [
+      // meta bri iifname => reg1 ; cmp reg1 == bridge
+      .meta(key: u32(NFT_META_BRI_IIFNAME), dreg: u32(NFT_REG_1)),
+      .cmp(sreg: u32(NFT_REG_1), op: u32(NFT_CMP_EQ), data: Array(bridge.utf8) + [0]),
+      // ether daddr (link-layer header, offset 0, 6 bytes) => reg1 ; cmp reg1 == mac
+      .payload(base: u32(NFT_PAYLOAD_LL_HEADER), offset: 0, length: 6, dreg: u32(NFT_REG_1)),
+      .cmp(sreg: u32(NFT_REG_1), op: u32(NFT_CMP_EQ), data: destinationMAC),
+      // immediate verdict: drop
+      .verdict(s32(NF_DROP)),
+    ])
+  }
 }
 
-// libnftnl/uapi constants import inconsistently as Swift enums (with .rawValue)
+// uapi constants import inconsistently as Swift enums (with .rawValue)
 // or as plain integers; these normalise either form to the C argument type.
 private func u16<E: RawRepresentable>(_ v: E) -> UInt16 where E.RawValue: FixedWidthInteger {
   UInt16(truncatingIfNeeded: v.rawValue)

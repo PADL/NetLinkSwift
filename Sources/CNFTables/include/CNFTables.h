@@ -8,12 +8,6 @@
 
 #include <libmnl/libmnl.h>
 
-#include <libnftnl/common.h>
-#include <libnftnl/table.h>
-#include <libnftnl/chain.h>
-#include <libnftnl/rule.h>
-#include <libnftnl/expr.h>
-
 #include <linux/netfilter.h>
 #include <linux/netfilter_bridge.h>
 #include <linux/netfilter/nfnetlink.h>
