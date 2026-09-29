@@ -213,7 +213,7 @@ public final class NFTBatch {
   }
 
   private func _batchHdr(_ type: UInt16) {
-    _put(type: type, family: UInt8(AF_UNSPEC), flags: 0, resID: u16(NFNL_SUBSYS_NFTABLES))
+    _put(type: type, family: UInt8(NFPROTO_UNSPEC), flags: 0, resID: u16(NFNL_SUBSYS_NFTABLES))
     mnl_nlmsg_batch_next(_batch)
   }
 
